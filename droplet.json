@@ -1,0 +1,29 @@
+{
+  "id": "thump",
+  "name": "Thump",
+  "version": "1.0.0",
+  "summary": "One line about Thump",
+  "description": "A longer description, in plain paragraphs.",
+  "category": "Productivity",
+  "kit": {
+    "abi": 1,
+    "minAPI": "1.6.0"
+  },
+  "minAppVersion": "15.3.0",
+  "capabilities": [],
+  "surfaces": [
+    "shelf-widget"
+  ],
+  "icon": "Thump.icon",
+  "creator": {
+    "name": "Your name",
+    "kind": "community",
+    "url": "https://example.com",
+    "avatar": "Creator.png"
+  },
+  "source": {
+    "repository": "https://github.com/you/thump",
+    "license": "MIT"
+  },
+  "keywords": []
+}
