@@ -24,6 +24,7 @@ public final class ThumpDroplet: NSObject, ObservableObject, Droplet {
     
     // Live Activity publisher
     @Published private var liveActivitySubject: LiveActivityState? = nil
+    @Published private var lastTapLabel: String = "Tap!"
     
     @Published public var isListening: Bool = false
     
@@ -63,6 +64,7 @@ public final class ThumpDroplet: NSObject, ObservableObject, Droplet {
     }
     
     private func showLiveActivity(for actionName: String) {
+        self.lastTapLabel = actionName
         liveActivitySubject = LiveActivityState(priority: 0, accessibilityTitle: "Thump detected")
         
         Task {
@@ -167,10 +169,9 @@ extension ThumpDroplet: LiveActivityProviding {
     
     public func makeCompactTrailing() -> AnyView {
         AnyView(
-            Text("Thump!")
+            Text(lastTapLabel)
                 .font(.system(size: 14, weight: .semibold, design: .rounded))
                 .foregroundStyle(AdaptiveColors.notchSurfacePrimaryText)
-                .padding(.trailing, 8)
         )
     }
     

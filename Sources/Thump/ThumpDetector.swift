@@ -23,6 +23,7 @@ public final class ThumpDetector: ObservableObject {
     
     // UI Visualization
     @Published public var waveformData: Double = 0.0
+    @Published public var waveformHistory: [Double] = Array(repeating: 0.0, count: 50)
     
     // Test mode overrides (for the Calibration Wizard)
     public var overrideThreshold: Double?
@@ -61,9 +62,10 @@ public final class ThumpDetector: ObservableObject {
     private func commitTaps(count: Int) {
         guard !isSuppressingActions else { return }
         if count >= 2 {
-            if let actionName = actionRunner.executeAction(forTaps: min(count, 4)) {
-                onThumpDetected?(actionName)
-            }
+            let taps = min(count, 4)
+            let _ = actionRunner.executeAction(forTaps: taps)
+            let label = "\(taps) Taps"
+            onThumpDetected?(label)
         }
     }
     
@@ -73,7 +75,12 @@ public final class ThumpDetector: ObservableObject {
         // Setup detector callbacks
         knockDetector.onWaveformSample = { [weak self] sample in
             DispatchQueue.main.async {
-                self?.waveformData = sample
+                guard let self = self else { return }
+                self.waveformData = sample
+                self.waveformHistory.append(sample)
+                if self.waveformHistory.count > 50 {
+                    self.waveformHistory.removeFirst()
+                }
             }
         }
         

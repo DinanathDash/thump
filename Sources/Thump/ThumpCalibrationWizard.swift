@@ -81,7 +81,7 @@ private final class CalibrationCollector: ObservableObject {
         
         let peaks = doubleKnocks.map(\.peak) + tripleKnocks.map(\.peak) + quadKnocks.map(\.peak)
         let avgPeak = peaks.isEmpty ? 0.15 : peaks.reduce(0, +) / Double(peaks.count)
-        let threshold = avgPeak * 0.6
+        let threshold = avgPeak * 0.60 // Reverted to 0.60 so it doesn't pick up ambient noise and raise the noise floor
         
         let avgInterval = interKnockIntervals.isEmpty ? 0.40 : interKnockIntervals.reduce(0, +) / Double(interKnockIntervals.count)
         let groupingWindow = avgInterval * 1.3
@@ -117,7 +117,7 @@ struct ThumpCalibrationWizard: View {
                 .buttonStyle(DroppyQuietButtonStyle(size: .small))
             }
             .padding(.horizontal, DroppySpacing.xl)
-            .padding(.vertical, DroppySpacing.md)
+            .padding(.vertical, DroppySpacing.xl)
             .background(AdaptiveColors.panelBackgroundAuto)
             
             Divider()
@@ -150,7 +150,7 @@ struct ThumpCalibrationWizard: View {
                 }
             }
             .padding(DroppySpacing.xl)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             
             Divider()
             
@@ -187,10 +187,10 @@ struct ThumpCalibrationWizard: View {
                 }
             }
             .padding(.horizontal, DroppySpacing.xl)
-            .padding(.vertical, DroppySpacing.md)
+            .padding(.vertical, DroppySpacing.xl)
             .background(AdaptiveColors.panelBackgroundAuto)
         }
-        .frame(width: 450, height: 400)
+        .frame(width: 450, height: 500)
         .onAppear {
             detector.isSuppressingActions = true
             detector.overrideThreshold = 0.03
@@ -229,18 +229,8 @@ struct ThumpCalibrationWizard: View {
                     .font(.caption)
                     .foregroundStyle(AdaptiveColors.secondaryTextAuto)
                 
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(AdaptiveColors.buttonBackgroundAuto)
-                        
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(AdaptiveColors.selectionBlueAuto)
-                            .frame(width: max(0, min(geo.size.width, geo.size.width * CGFloat(detector.waveformData))))
-                            .animation(.interactiveSpring(response: 0.15, dampingFraction: 0.7), value: detector.waveformData)
-                    }
-                }
-                .frame(height: 16)
+                ThumpWaveformView(values: detector.waveformHistory, threshold: detector.overrideThreshold ?? 0.03)
+                    .frame(height: 60)
             }
             .padding(.top, DroppySpacing.md)
             
@@ -308,5 +298,53 @@ struct ThumpCalibrationWizard: View {
         detector.isSuppressingActions = false
         detector.overrideThreshold = nil
         dismiss()
+    }
+}
+
+struct ThumpWaveformView: View {
+    let values: [Double]
+    let threshold: Double
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(AdaptiveColors.buttonBackgroundAuto)
+
+                Canvas { context, size in
+                    let midY = size.height * 0.5
+                    let thresholdY = max(size.height * (1 - threshold * 4), 0) // scale threshold up for visual
+
+                    var baseline = Path()
+                    baseline.move(to: CGPoint(x: 0, y: midY))
+                    baseline.addLine(to: CGPoint(x: size.width, y: midY))
+                    context.stroke(baseline, with: .color(.white.opacity(0.1)), lineWidth: 1)
+
+                    var thresholdPath = Path()
+                    thresholdPath.move(to: CGPoint(x: 0, y: thresholdY))
+                    thresholdPath.addLine(to: CGPoint(x: size.width, y: thresholdY))
+                    context.stroke(thresholdPath, with: .color(Color.red.opacity(0.9)), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+
+                    guard values.count > 1 else { return }
+                    let stepX = size.width / CGFloat(max(values.count - 1, 1))
+                    var waveformPath = Path()
+                    for (index, value) in values.enumerated() {
+                        let x = CGFloat(index) * stepX
+                        // Visual scaling factor for the graph
+                        let displayValue = min(max(value * 4, 0), 1.0)
+                        let y = size.height - CGFloat(displayValue) * size.height
+                        
+                        if index == 0 {
+                            waveformPath.move(to: CGPoint(x: x, y: y))
+                        } else {
+                            waveformPath.addLine(to: CGPoint(x: x, y: y))
+                        }
+                    }
+
+                    context.stroke(waveformPath, with: .color(AdaptiveColors.selectionBlueAuto), lineWidth: 2)
+                }
+                .padding(8)
+            }
+        }
     }
 }

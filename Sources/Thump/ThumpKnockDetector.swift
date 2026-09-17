@@ -121,9 +121,9 @@ final class ThumpKnockDetector {
             fallbackSampleInterval: sampleRate > 0 ? 1 / sampleRate : 0.01
         )
 
-        let baselineQuiet = quietAverage < adaptiveThreshold * 0.28 && quietMax < adaptiveThreshold * 0.72
-        let isSharpImpulse = jerkMagnitude > adaptiveThreshold * 0.70 || jerkMagnitude > highPassMagnitude * 0.90
-        let briefImpulse = impulseDuration <= (sequenceIsOpen ? 0.11 : 0.08)
+        let baselineQuiet = quietAverage < adaptiveThreshold * 0.75 && quietMax < adaptiveThreshold * 1.2
+        let isSharpImpulse = jerkMagnitude > adaptiveThreshold * 0.40 || jerkMagnitude > highPassMagnitude * 0.60
+        let briefImpulse = impulseDuration <= (sequenceIsOpen ? 0.25 : 0.20)
         let passesSequenceGate = sequenceIsOpen || baselineQuiet
 
         if filteredMagnitude > adaptiveThreshold,
@@ -204,8 +204,8 @@ final class ThumpKnockDetector {
             return false
         }
 
-        let lowFrequencyLimit = max(0.010, threshold * 0.08)
-        let orientationLimit = max(0.080, threshold * 0.55)
+        let lowFrequencyLimit = max(0.015, threshold * 0.25)
+        let orientationLimit = max(0.120, threshold * 1.00)
         return lowFrequencyMotion > lowFrequencyLimit || orientationDrift > orientationLimit
     }
 

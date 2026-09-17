@@ -6,12 +6,7 @@ struct ThumpSettingsPane: View {
     let context: SettingsPaneContext
     
     @State private var showingWizard = false
-    
-    // Accel Config (for displaying current status)
-    @AppStorage("thump.accelThreshold") private var accelThreshold: Double = 0.15
-    @AppStorage("thump.groupingWindow") private var groupingWindow: Double = 0.8
-    @AppStorage("thump.cooldown") private var cooldown: Double = 0.3
-    
+    @State private var redrawCounter = 0
     var body: some View {
         VStack(alignment: .leading, spacing: DroppySpacing.xl) {
             
@@ -45,10 +40,15 @@ struct ThumpSettingsPane: View {
                         DropletSettingsDivider()
                         
                         HStack {
+                            let accelThreshold = droplet.host?.preferences.value(forKey: "thump.accelThreshold", default: 0.15) ?? 0.15
+                            let groupingWindow = droplet.host?.preferences.value(forKey: "thump.groupingWindow", default: 0.8) ?? 0.8
+                            let cooldown = droplet.host?.preferences.value(forKey: "thump.cooldown", default: 0.3) ?? 0.3
+                            
                             VStack(alignment: .leading, spacing: 4) {
+                                let _ = redrawCounter
                                 Text("Threshold: \(String(format: "%.2f", accelThreshold))")
-                                Text("Window: \(String(format: "%.1f s", groupingWindow))")
-                                Text("Cooldown: \(String(format: "%.1f s", cooldown))")
+                                Text("Window: \(String(format: "%.2f s", groupingWindow))")
+                                Text("Cooldown: \(String(format: "%.2f s", cooldown))")
                             }
                             .font(.footnote)
                             .foregroundStyle(AdaptiveColors.secondaryTextAuto)
@@ -73,11 +73,11 @@ struct ThumpSettingsPane: View {
                         
                     DropletSettingsCard {
                         if let host = droplet.host {
-                            ActionConfigRow(host: host, taps: 2, title: "Double Tap")
+                            ActionConfigRow(host: host, taps: 2, title: "Double Tap", globalRedraw: $redrawCounter)
                             DropletSettingsDivider()
-                            ActionConfigRow(host: host, taps: 3, title: "Triple Tap")
+                            ActionConfigRow(host: host, taps: 3, title: "Triple Tap", globalRedraw: $redrawCounter)
                             DropletSettingsDivider()
-                            ActionConfigRow(host: host, taps: 4, title: "Quad Tap")
+                            ActionConfigRow(host: host, taps: 4, title: "Quad Tap", globalRedraw: $redrawCounter)
                         }
                     }
                 }
@@ -88,21 +88,36 @@ struct ThumpSettingsPane: View {
                 ThumpCalibrationWizard(detector: detector)
             }
         }
+        .onChange(of: showingWizard) { _ in
+            redrawCounter += 1
+        }
     }
 }
 
-private struct ActionConfigRow: View {
+struct ActionConfigRow: View {
     let host: DropletHost
     let taps: Int
     let title: String
+    @Binding var globalRedraw: Int
     
     var body: some View {
         VStack(spacing: 0) {
+            let _ = globalRedraw // create dependency on globalRedraw
             DropletControlRow(title: title, icon: "hand.tap") {
                 Picker("Action Type", selection: Binding(
                     get: { host.preferences.value(forKey: "thump.actionType.\(taps)", default: ThumpActionType.none.rawValue) },
                     set: { new in
+                        if new != ThumpActionType.none.rawValue {
+                            for other in 2...4 {
+                                if other != taps {
+                                    if host.preferences.value(forKey: "thump.actionType.\(other)", default: ThumpActionType.none.rawValue) == new {
+                                        host.preferences.setValue(ThumpActionType.none.rawValue, forKey: "thump.actionType.\(other)")
+                                    }
+                                }
+                            }
+                        }
                         host.preferences.setValue(new, forKey: "thump.actionType.\(taps)")
+                        globalRedraw += 1
                         requestPermission(for: new)
                     }
                 )) {
@@ -134,18 +149,34 @@ private struct ActionConfigRow: View {
                     ))
                         .textFieldStyle(.roundedBorder)
                 }
+            } else if actionType == ThumpActionType.launchApp.rawValue {
+                DropletSettingsDivider()
+                DropletControlRow(title: "App Name") {
+                    TextField("e.g. Spotify", text: Binding(
+                        get: { host.preferences.value(forKey: "thump.actionPayload.\(taps)", default: "") },
+                        set: { host.preferences.setValue($0, forKey: "thump.actionPayload.\(taps)") }
+                    ))
+                        .textFieldStyle(.roundedBorder)
+                }
             }
         }
     }
     
     private func requestPermission(for action: String) {
         Task {
+            var perm: DropletPermission?
             if action == ThumpActionType.screenshot.rawValue {
-                _ = await host.permissions.request(.screenCapture)
-            } else if action == ThumpActionType.playPause.rawValue || action == ThumpActionType.muteUnmute.rawValue {
-                _ = await host.permissions.request(.accessibility)
-            } else if action == ThumpActionType.appleScript.rawValue {
-                _ = await host.permissions.request(.appleEvents)
+                perm = .screenCapture
+            } else if [ThumpActionType.playPause.rawValue, ThumpActionType.muteUnmute.rawValue, ThumpActionType.lockScreen.rawValue, ThumpActionType.brightnessUp.rawValue, ThumpActionType.brightnessDown.rawValue, ThumpActionType.volumeUp.rawValue, ThumpActionType.volumeDown.rawValue].contains(action) {
+                perm = .accessibility
+            } else if [ThumpActionType.appleScript.rawValue, ThumpActionType.shellCommand.rawValue, ThumpActionType.runShortcut.rawValue, ThumpActionType.launchApp.rawValue].contains(action) {
+                perm = .appleEvents
+            }
+            if let perm = perm {
+                let status = host.permissions.status(for: perm)
+                if status == .notDetermined {
+                    _ = await host.permissions.request(perm)
+                }
             }
         }
     }
@@ -155,17 +186,7 @@ private struct LiveSensorView: View {
     @ObservedObject var detector: ThumpDetector
     
     var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(AdaptiveColors.buttonBackgroundAuto)
-                
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(AdaptiveColors.selectionBlueAuto)
-                    .frame(width: max(0, min(geo.size.width, geo.size.width * CGFloat(detector.waveformData))))
-                    .animation(.interactiveSpring(response: 0.2, dampingFraction: 0.6), value: detector.waveformData)
-            }
-        }
-        .frame(height: 12)
+        ThumpWaveformView(values: detector.waveformHistory, threshold: detector.host.preferences.value(forKey: "thump.accelThreshold", default: 0.15))
+            .frame(height: 50)
     }
 }
