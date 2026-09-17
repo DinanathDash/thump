@@ -6,7 +6,7 @@ import IOKit.hid
 
 @MainActor
 public final class ThumpDetector: ObservableObject {
-    private let host: DropletHost
+    public let host: DropletHost
     private let actionRunner: ThumpActionRunner
     
     // Status
@@ -15,6 +15,7 @@ public final class ThumpDetector: ObservableObject {
     
     private var isStarted = false
     public var onThumpDetected: ((String) -> Void)?
+    public var onStateChange: ((Bool) -> Void)?
     
     // Detection Objects
     private let accelService = ThumpAccelerometerService()
@@ -40,17 +41,20 @@ public final class ThumpDetector: ObservableObject {
             host.log.info("ThumpDetector: Started using Accelerometer.")
             isUsingAccelerometer = true
             isListening = true
+            onStateChange?(true)
             return
         }
         
         host.log.error("ThumpDetector: Failed to start Accelerometer.")
         isStarted = false
         isListening = false
+        onStateChange?(false)
     }
     
     public func stop() {
         isStarted = false
         isListening = false
+        onStateChange?(false)
         accelService.stop()
     }
     
@@ -76,12 +80,15 @@ public final class ThumpDetector: ObservableObject {
         accelService.onSample = { [weak self] sample in
             guard let self = self else { return }
             
-            // Read settings from UserDefaults or use defaults
-            // We increase default threshold to 0.15 to prevent false positives
-            let userThreshold = UserDefaults.standard.double(forKey: "thump.accelThreshold") > 0 ? UserDefaults.standard.double(forKey: "thump.accelThreshold") : 0.15
-            let threshold = self.overrideThreshold ?? userThreshold
-            let groupingWindow = UserDefaults.standard.double(forKey: "thump.groupingWindow") > 0 ? UserDefaults.standard.double(forKey: "thump.groupingWindow") : 0.8
-            let cooldown = UserDefaults.standard.double(forKey: "thump.cooldown") > 0 ? UserDefaults.standard.double(forKey: "thump.cooldown") : 0.3
+            // Read settings from host.preferences
+            let userThreshold = self.host.preferences.value(forKey: "thump.accelThreshold", default: 0.15)
+            let threshold = self.overrideThreshold ?? (userThreshold > 0 ? userThreshold : 0.15)
+            
+            let userWindow = self.host.preferences.value(forKey: "thump.groupingWindow", default: 0.8)
+            let groupingWindow = userWindow > 0 ? userWindow : 0.8
+            
+            let userCooldown = self.host.preferences.value(forKey: "thump.cooldown", default: 0.3)
+            let cooldown = userCooldown > 0 ? userCooldown : 0.3
             
             if let pattern = self.knockDetector.process(
                 sample: SIMD3<Double>(sample.x, sample.y, sample.z),

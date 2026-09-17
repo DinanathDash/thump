@@ -299,9 +299,9 @@ struct ThumpCalibrationWizard: View {
     
     private func saveConfiguration() {
         let computed = collector.computeSettings()
-        UserDefaults.standard.set(computed.threshold, forKey: "thump.accelThreshold")
-        UserDefaults.standard.set(computed.groupingWindow, forKey: "thump.groupingWindow")
-        UserDefaults.standard.set(computed.cooldown, forKey: "thump.cooldown")
+        detector.host.preferences.setValue(computed.threshold, forKey: "thump.accelThreshold")
+        detector.host.preferences.setValue(computed.groupingWindow, forKey: "thump.groupingWindow")
+        detector.host.preferences.setValue(computed.cooldown, forKey: "thump.cooldown")
     }
     
     private func cleanupAndDismiss() {

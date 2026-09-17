@@ -21,54 +21,64 @@ struct ThumpSettingsPane: View {
                     .foregroundStyle(AdaptiveColors.primaryTextAuto)
                     
                 DropletSettingsCard {
-                    VStack(alignment: .leading, spacing: DroppySpacing.sm) {
-                        Text("Live Sensor Activity")
-                            .font(.subheadline)
-                            .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
-                        
-                        if let detector = droplet.detector {
-                            LiveSensorView(detector: detector)
-                        } else {
-                            Text("Sensor inactive")
+                    DropletToggleRow(title: "Enable Thump", isOn: Binding(
+                        get: { droplet.isListening },
+                        set: { if $0 { droplet.detector?.start() } else { droplet.detector?.stop() } }
+                    ))
+                    
+                    if droplet.isListening {
+                        DropletSettingsDivider()
+                        VStack(alignment: .leading, spacing: DroppySpacing.sm) {
+                            Text("Live Sensor Activity")
+                                .font(.subheadline)
                                 .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
+                            
+                            if let detector = droplet.detector {
+                                LiveSensorView(detector: detector)
+                            } else {
+                                Text("Sensor inactive")
+                                    .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
+                            }
                         }
-                    }
-                    .padding(DroppySpacing.md)
-                    
-                    DropletSettingsDivider()
-                    
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Threshold: \(String(format: "%.2f", accelThreshold))")
-                            Text("Window: \(String(format: "%.1f s", groupingWindow))")
-                            Text("Cooldown: \(String(format: "%.1f s", cooldown))")
-                        }
-                        .font(.footnote)
-                        .foregroundStyle(AdaptiveColors.secondaryTextAuto)
+                        .padding(DroppySpacing.md)
                         
-                        Spacer()
+                        DropletSettingsDivider()
                         
-                        Button("Run Calibration Wizard") {
-                            showingWizard = true
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Threshold: \(String(format: "%.2f", accelThreshold))")
+                                Text("Window: \(String(format: "%.1f s", groupingWindow))")
+                                Text("Cooldown: \(String(format: "%.1f s", cooldown))")
+                            }
+                            .font(.footnote)
+                            .foregroundStyle(AdaptiveColors.secondaryTextAuto)
+                            
+                            Spacer()
+                            
+                            Button("Run Calibration Wizard") {
+                                showingWizard = true
+                            }
+                            .buttonStyle(DroppyQuietButtonStyle(size: .small))
                         }
-                        .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                        .padding(DroppySpacing.md)
                     }
-                    .padding(DroppySpacing.md)
                 }
             }
             
-            VStack(alignment: .leading, spacing: DroppySpacing.md) {
-                Text("Actions")
-                    .font(.headline)
-                    .foregroundStyle(AdaptiveColors.primaryTextAuto)
-                    
-                DropletSettingsCard {
-                    if let host = droplet.host {
-                        ActionConfigRow(host: host, taps: 2, title: "Double Tap")
-                        DropletSettingsDivider()
-                        ActionConfigRow(host: host, taps: 3, title: "Triple Tap")
-                        DropletSettingsDivider()
-                        ActionConfigRow(host: host, taps: 4, title: "Quad Tap")
+            if droplet.isListening {
+                VStack(alignment: .leading, spacing: DroppySpacing.md) {
+                    Text("Actions")
+                        .font(.headline)
+                        .foregroundStyle(AdaptiveColors.primaryTextAuto)
+                        
+                    DropletSettingsCard {
+                        if let host = droplet.host {
+                            ActionConfigRow(host: host, taps: 2, title: "Double Tap")
+                            DropletSettingsDivider()
+                            ActionConfigRow(host: host, taps: 3, title: "Triple Tap")
+                            DropletSettingsDivider()
+                            ActionConfigRow(host: host, taps: 4, title: "Quad Tap")
+                        }
                     }
                 }
             }
@@ -86,24 +96,13 @@ private struct ActionConfigRow: View {
     let taps: Int
     let title: String
     
-    @AppStorage var actionType: String
-    @AppStorage var actionPayload: String
-    
-    init(host: DropletHost, taps: Int, title: String) {
-        self.host = host
-        self.taps = taps
-        self.title = title
-        self._actionType = AppStorage(wrappedValue: ThumpActionType.none.rawValue, "thump.actionType.\(taps)")
-        self._actionPayload = AppStorage(wrappedValue: "", "thump.actionPayload.\(taps)")
-    }
-    
     var body: some View {
         VStack(spacing: 0) {
             DropletControlRow(title: title, icon: "hand.tap") {
                 Picker("Action Type", selection: Binding(
-                    get: { actionType },
+                    get: { host.preferences.value(forKey: "thump.actionType.\(taps)", default: ThumpActionType.none.rawValue) },
                     set: { new in
-                        actionType = new
+                        host.preferences.setValue(new, forKey: "thump.actionType.\(taps)")
                         requestPermission(for: new)
                     }
                 )) {
@@ -115,17 +114,24 @@ private struct ActionConfigRow: View {
                 .frame(width: 160)
             }
             
+            let actionType = host.preferences.value(forKey: "thump.actionType.\(taps)", default: ThumpActionType.none.rawValue)
             if actionType == ThumpActionType.appleScript.rawValue || actionType == ThumpActionType.shellCommand.rawValue {
                 DropletSettingsDivider()
                 DropletControlRow(title: "Command / Script") {
-                    TextField("Enter script...", text: $actionPayload, axis: .vertical)
+                    TextField("Enter script...", text: Binding(
+                        get: { host.preferences.value(forKey: "thump.actionPayload.\(taps)", default: "") },
+                        set: { host.preferences.setValue($0, forKey: "thump.actionPayload.\(taps)") }
+                    ), axis: .vertical)
                         .textFieldStyle(.roundedBorder)
                         .lineLimit(1...5)
                 }
             } else if actionType == ThumpActionType.runShortcut.rawValue {
                 DropletSettingsDivider()
                 DropletControlRow(title: "Shortcut Name") {
-                    TextField("Enter name...", text: $actionPayload)
+                    TextField("Enter name...", text: Binding(
+                        get: { host.preferences.value(forKey: "thump.actionPayload.\(taps)", default: "") },
+                        set: { host.preferences.setValue($0, forKey: "thump.actionPayload.\(taps)") }
+                    ))
                         .textFieldStyle(.roundedBorder)
                 }
             }
