@@ -12,18 +12,21 @@
   },
   "capabilities" : {
     "declared" : [
-      "microphone",
-      "apple-events"
+      "apple-events",
+      "accessibility",
+      "screen-capture"
     ],
     "granted" : [
+      "accessibility",
       "apple-events",
-      "microphone"
+      "screen-capture"
     ]
   },
   "droplet" : {
     "capabilities" : [
-      "microphone",
-      "apple-events"
+      "apple-events",
+      "accessibility",
+      "screen-capture"
     ],
     "category" : "Productivity",
     "creator" : "Dinanath Dash",
@@ -60,12 +63,12 @@
   },
   "log" : [
     {
-      "at" : "2026-09-16T21:01:04Z",
+      "at" : "2026-09-17T07:22:03Z",
       "level" : "info",
       "message" : "Thump activated"
     },
     {
-      "at" : "2026-09-16T21:01:04Z",
+      "at" : "2026-09-17T07:22:03Z",
       "level" : "info",
       "message" : "ThumpDetector: Started using Accelerometer."
     }
@@ -81,7 +84,7 @@
   "schema" : "droppykit-harness-report\/1",
   "shelfWidgets" : [
     {
-      "contentHeight" : "fixed(68.0)",
+      "contentHeight" : "fixed(52.0)",
       "id" : "thump",
       "preferredPairedWidth" : 190,
       "preferredSoloWidth" : 380,

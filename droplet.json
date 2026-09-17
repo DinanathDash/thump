@@ -11,8 +11,9 @@
   },
   "minAppVersion": "15.3.0",
   "capabilities": [
-    "microphone",
-    "apple-events"
+    "apple-events",
+    "accessibility",
+    "screen-capture"
   ],
   "surfaces": [
     "shelf-widget",

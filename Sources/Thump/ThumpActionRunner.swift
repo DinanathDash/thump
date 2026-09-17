@@ -39,9 +39,13 @@ public final class ThumpActionRunner {
         case .runShortcut:
             runShellCommand("shortcuts run \"\(payload)\"")
         case .screenshot:
-            runShellCommand("screencapture -i")
+            // Interactive mode (-i) might block the process. Use silent capture to clipboard (-c) or file.
+            // Let's use interactive mode but ensure it's detached from the shell by using `open` or running asynchronously.
+            // Wait, actually, `screencapture -i` works best if run in a detached process.
+            runShellCommand("screencapture -i &")
         case .playPause:
-            runAppleScript("tell application \"Music\" to playpause")
+            // Universal play/pause media key
+            runAppleScript("tell application \"System Events\" to key code 100")
         case .muteUnmute:
             runAppleScript("set volume output muted not (output muted of (get volume settings))")
         }

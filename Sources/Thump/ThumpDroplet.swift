@@ -79,7 +79,7 @@ extension ThumpDroplet: ShelfWidgetProviding {
                 layoutTraits: ShelfWidgetLayoutTraits(
                     preferredSoloWidth: 380,
                     preferredPairedWidth: 190,
-                    contentHeight: .fixed(58)
+                    contentHeight: .fixed(52)
                 )
             )
         ]
@@ -97,7 +97,7 @@ private struct ThumpWidget: View {
     let context: ShelfWidgetContext
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DroppySpacing.sm) {
+        VStack {
             HStack(spacing: DroppySpacing.xsm) {
                 Image(systemName: "hand.tap.fill")
                     .font(.system(size: 12, weight: .medium))
@@ -125,14 +125,17 @@ private struct ThumpWidget: View {
             .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
 
             if !context.isCompact {
-                Text(droplet.detector?.isUsingAccelerometer == true ? "Sensor: Accelerometer" : "Sensor: Microphone")
-                    .font(.system(size: 14, weight: .regular, design: .rounded))
-                    .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
+                HStack {
+                    Text("Sensor: Accelerometer")
+                        .font(.system(size: 14, weight: .regular, design: .rounded))
+                        .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
+                    Spacer(minLength: 0)
+                }
             }
             Spacer(minLength: 0)
         }
-        .padding(context.contentInsets)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(context.contentInsets)
     }
 }
 

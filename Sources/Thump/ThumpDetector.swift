@@ -1,7 +1,6 @@
 import Foundation
 import Combine
 import DroppyKit
-import AVFoundation
 import IOKit
 import IOKit.hid
 
@@ -17,19 +16,16 @@ public final class ThumpDetector: ObservableObject {
     private var isStarted = false
     public var onThumpDetected: ((String) -> Void)?
     
-    // State
-    private var tapCount: Int = 0
-    private var lastTapTime: Date = Date.distantPast
-    private var tapTimer: Timer?
+    // Detection Objects
+    private let accelService = ThumpAccelerometerService()
+    private let knockDetector = ThumpKnockDetector()
     
-    // Jerk Detection State
-    private var lastAccelX: Double = 0
-    private var lastAccelY: Double = 0
-    private var lastAccelZ: Double = 0
+    // UI Visualization
+    @Published public var waveformData: Double = 0.0
     
-    // Engine
-    private var audioEngine: AVAudioEngine?
-    private var hidDevice: IOHIDDevice?
+    // Test mode overrides (for the Calibration Wizard)
+    public var overrideThreshold: Double?
+    public var isSuppressingActions: Bool = false
     
     public init(host: DropletHost, actionRunner: ThumpActionRunner) {
         self.host = host
@@ -40,7 +36,6 @@ public final class ThumpDetector: ObservableObject {
         guard !isStarted else { return }
         isStarted = true
         
-        // Try Accelerometer first
         if tryStartAccelerometer() {
             host.log.info("ThumpDetector: Started using Accelerometer.")
             isUsingAccelerometer = true
@@ -48,15 +43,7 @@ public final class ThumpDetector: ObservableObject {
             return
         }
         
-        // Fallback to Microphone
-        if tryStartMicrophone() {
-            host.log.info("ThumpDetector: Started using Microphone fallback.")
-            isUsingAccelerometer = false
-            isListening = true
-            return
-        }
-        
-        host.log.error("ThumpDetector: Failed to start both Accelerometer and Microphone.")
+        host.log.error("ThumpDetector: Failed to start Accelerometer.")
         isStarted = false
         isListening = false
     }
@@ -64,50 +51,11 @@ public final class ThumpDetector: ObservableObject {
     public func stop() {
         isStarted = false
         isListening = false
-        
-        if let device = hidDevice {
-            IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
-            IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
-            hidDevice = nil
-        }
-        
-        if let engine = audioEngine {
-            engine.inputNode.removeTap(onBus: 0)
-            engine.stop()
-            audioEngine = nil
-        }
-    }
-    
-    private func handleTap() {
-        let now = Date()
-        let debounceTime: TimeInterval = 0.2
-        let tapWindow: TimeInterval = 0.6 // Max time between consecutive taps
-        
-        // Debounce
-        guard now.timeIntervalSince(lastTapTime) > debounceTime else { return }
-        
-        if now.timeIntervalSince(lastTapTime) > tapWindow {
-            tapCount = 1 // Start new sequence
-        } else {
-            tapCount += 1
-        }
-        
-        lastTapTime = now
-        host.log.info("Thump detected! Count: \(tapCount)")
-        
-        // Reset the timer
-        tapTimer?.invalidate()
-        let currentCount = tapCount
-        tapTimer = Timer.scheduledTimer(withTimeInterval: tapWindow, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                self?.commitTaps(count: currentCount)
-            }
-        }
+        accelService.stop()
     }
     
     private func commitTaps(count: Int) {
-        // Reset tap count
-        tapCount = 0
+        guard !isSuppressingActions else { return }
         if count >= 2 {
             if let actionName = actionRunner.executeAction(forTaps: min(count, 4)) {
                 onThumpDetected?(actionName)
@@ -115,116 +63,39 @@ public final class ThumpDetector: ObservableObject {
         }
     }
     
-    // MARK: - Accelerometer
     private func tryStartAccelerometer() -> Bool {
-        let matchingDict = IOServiceMatching("AppleSPUHIDDevice")
-        var iterator: io_iterator_t = 0
-        let result = IOServiceGetMatchingServices(kIOMainPortDefault, matchingDict, &iterator)
+        if !accelService.available() { return false }
         
-        guard result == kIOReturnSuccess && iterator != 0 else { return false }
-        
-        var device = IOIteratorNext(iterator)
-        var found = false
-        
-        while device != 0 {
-            let props = UnsafeMutablePointer<Unmanaged<CFMutableDictionary>?>.allocate(capacity: 1)
-            IORegistryEntryCreateCFProperties(device, props, kCFAllocatorDefault, 0)
-            
-            if let dict = props.pointee?.takeRetainedValue() as? [String: Any],
-               let usage = dict["PrimaryUsage"] as? Int, usage == 3 {
-                
-                if let dev = IOHIDDeviceCreate(kCFAllocatorDefault, device) {
-                    if IOHIDDeviceOpen(dev, IOOptionBits(kIOHIDOptionsTypeNone)) == kIOReturnSuccess {
-                        self.hidDevice = dev
-                        found = true
-                        
-                        let reportSize = 22
-                        let report = UnsafeMutablePointer<UInt8>.allocate(capacity: reportSize)
-                        
-                        // Callback needs to route back to class
-                        let context = Unmanaged.passUnretained(self).toOpaque()
-                        let callback: IOHIDReportCallback = { ctx, result, sender, type, reportId, reportPtr, reportLength in
-                            guard let ctx = ctx, reportLength >= 18 else { return }
-                            let detector = Unmanaged<ThumpDetector>.fromOpaque(ctx).takeUnretainedValue()
-                            
-                            let xData = Data(bytes: reportPtr.advanced(by: 6), count: 4)
-                            let yData = Data(bytes: reportPtr.advanced(by: 10), count: 4)
-                            let zData = Data(bytes: reportPtr.advanced(by: 14), count: 4)
-                            
-                            let x = Double(Int32(littleEndian: xData.withUnsafeBytes { $0.load(as: Int32.self) })) / 65536.0
-                            let y = Double(Int32(littleEndian: yData.withUnsafeBytes { $0.load(as: Int32.self) })) / 65536.0
-                            let z = Double(Int32(littleEndian: zData.withUnsafeBytes { $0.load(as: Int32.self) })) / 65536.0
-                            
-                            let dx = x - detector.lastAccelX
-                            let dy = y - detector.lastAccelY
-                            let dz = z - detector.lastAccelZ
-                            
-                            detector.lastAccelX = x
-                            detector.lastAccelY = y
-                            detector.lastAccelZ = z
-                            
-                            let jerk = sqrt(dx*dx + dy*dy + dz*dz)
-                            
-                            if jerk > 0.05 {
-                                Task { @MainActor in
-                                    detector.handleTap()
-                                }
-                            }
-                        }
-                        
-                        IOHIDDeviceRegisterInputReportCallback(dev, report, reportSize, callback, context)
-                        IOHIDDeviceScheduleWithRunLoop(dev, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
-                        
-                        break
-                    }
-                }
+        // Setup detector callbacks
+        knockDetector.onWaveformSample = { [weak self] sample in
+            DispatchQueue.main.async {
+                self?.waveformData = sample
             }
-            IOObjectRelease(device)
-            device = IOIteratorNext(iterator)
         }
         
-        IOObjectRelease(iterator)
-        return found
-    }
-    
-    // MARK: - Microphone
-    private func tryStartMicrophone() -> Bool {
-        let engine = AVAudioEngine()
-        let input = engine.inputNode
-        let format = input.inputFormat(forBus: 0)
-        
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, time in
-            guard let self = self, let channelData = buffer.floatChannelData?[0] else { return }
-            let frameLength = Int(buffer.frameLength)
+        accelService.onSample = { [weak self] sample in
+            guard let self = self else { return }
             
-            var sum: Float = 0
-            for i in 0..<frameLength {
-                sum += channelData[i] * channelData[i]
-            }
-            let rms = sqrt(sum / Float(frameLength))
-            let db = 20 * log10(rms)
+            // Read settings from UserDefaults or use defaults
+            // We increase default threshold to 0.15 to prevent false positives
+            let userThreshold = UserDefaults.standard.double(forKey: "thump.accelThreshold") > 0 ? UserDefaults.standard.double(forKey: "thump.accelThreshold") : 0.15
+            let threshold = self.overrideThreshold ?? userThreshold
+            let groupingWindow = UserDefaults.standard.double(forKey: "thump.groupingWindow") > 0 ? UserDefaults.standard.double(forKey: "thump.groupingWindow") : 0.8
+            let cooldown = UserDefaults.standard.double(forKey: "thump.cooldown") > 0 ? UserDefaults.standard.double(forKey: "thump.cooldown") : 0.3
             
-            let sensitivityStr = UserDefaults.standard.string(forKey: "thump.micSensitivity") ?? "Medium"
-            let threshold: Float
-            switch sensitivityStr {
-            case "High": threshold = -35.0
-            case "Low": threshold = -15.0
-            default: threshold = -25.0
-            }
-            
-            if db > threshold {
+            if let pattern = self.knockDetector.process(
+                sample: SIMD3<Double>(sample.x, sample.y, sample.z),
+                threshold: threshold,
+                groupingWindow: groupingWindow,
+                cooldown: cooldown,
+                now: sample.timestamp
+            ) {
                 Task { @MainActor in
-                    self.handleTap()
+                    self.commitTaps(count: pattern)
                 }
             }
         }
         
-        do {
-            try engine.start()
-            self.audioEngine = engine
-            return true
-        } catch {
-            return false
-        }
+        return accelService.start()
     }
 }

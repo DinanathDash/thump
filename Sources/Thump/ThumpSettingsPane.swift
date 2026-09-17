@@ -5,60 +5,55 @@ struct ThumpSettingsPane: View {
     @ObservedObject var droplet: ThumpDroplet
     let context: SettingsPaneContext
     
-    // Status
-    @State private var micStatus: DropletPermissionStatus = .notDetermined
+    @State private var showingWizard = false
     
-    // Settings
-    @AppStorage("thump.micSensitivity") private var micSensitivity: String = "Medium"
+    // Accel Config (for displaying current status)
+    @AppStorage("thump.accelThreshold") private var accelThreshold: Double = 0.15
+    @AppStorage("thump.groupingWindow") private var groupingWindow: Double = 0.8
+    @AppStorage("thump.cooldown") private var cooldown: Double = 0.3
     
     var body: some View {
         VStack(alignment: .leading, spacing: DroppySpacing.xl) {
             
             VStack(alignment: .leading, spacing: DroppySpacing.md) {
-                Text("Detection")
+                Text("Calibration")
                     .font(.headline)
                     .foregroundStyle(AdaptiveColors.primaryTextAuto)
                     
                 DropletSettingsCard {
-                    DropletControlRow(
-                        title: "Microphone",
-                        icon: "mic",
-                        infoTip: "Required to detect thumps via audio if the accelerometer is unavailable."
-                    ) {
-                        if micStatus == .granted {
-                            Text("Granted")
-                                .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
-                        } else if micStatus == .denied {
-                            Button("Settings") {
-                                droplet.host?.permissions.openSystemSettings(for: .microphone)
-                            }
-                            .buttonStyle(DroppyAccentButtonStyle(size: .small))
+                    VStack(alignment: .leading, spacing: DroppySpacing.sm) {
+                        Text("Live Sensor Activity")
+                            .font(.subheadline)
+                            .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
+                        
+                        if let detector = droplet.detector {
+                            LiveSensorView(detector: detector)
                         } else {
-                            Button("Request") {
-                                Task {
-                                    _ = await droplet.host?.permissions.request(.microphone)
-                                    await checkPermissions()
-                                }
-                            }
-                            .buttonStyle(DroppyAccentButtonStyle(size: .small))
+                            Text("Sensor inactive")
+                                .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
                         }
                     }
+                    .padding(DroppySpacing.md)
                     
                     DropletSettingsDivider()
                     
-                    DropletControlRow(
-                        title: "Microphone Sensitivity",
-                        icon: "waveform",
-                        infoTip: "Adjust if Thump triggers too often or too rarely."
-                    ) {
-                        Picker("Sensitivity", selection: $micSensitivity) {
-                            Text("High (Easier)").tag("High")
-                            Text("Medium").tag("Medium")
-                            Text("Low (Harder)").tag("Low")
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Threshold: \(String(format: "%.2f", accelThreshold))")
+                            Text("Window: \(String(format: "%.1f s", groupingWindow))")
+                            Text("Cooldown: \(String(format: "%.1f s", cooldown))")
                         }
-                        .labelsHidden()
-                        .frame(width: 150)
+                        .font(.footnote)
+                        .foregroundStyle(AdaptiveColors.secondaryTextAuto)
+                        
+                        Spacer()
+                        
+                        Button("Run Calibration Wizard") {
+                            showingWizard = true
+                        }
+                        .buttonStyle(DroppyQuietButtonStyle(size: .small))
                     }
+                    .padding(DroppySpacing.md)
                 }
             }
             
@@ -68,34 +63,34 @@ struct ThumpSettingsPane: View {
                     .foregroundStyle(AdaptiveColors.primaryTextAuto)
                     
                 DropletSettingsCard {
-                    ActionConfigRow(taps: 2, title: "Double Tap")
-                    DropletSettingsDivider()
-                    ActionConfigRow(taps: 3, title: "Triple Tap")
-                    DropletSettingsDivider()
-                    ActionConfigRow(taps: 4, title: "Quad Tap")
+                    if let host = droplet.host {
+                        ActionConfigRow(host: host, taps: 2, title: "Double Tap")
+                        DropletSettingsDivider()
+                        ActionConfigRow(host: host, taps: 3, title: "Triple Tap")
+                        DropletSettingsDivider()
+                        ActionConfigRow(host: host, taps: 4, title: "Quad Tap")
+                    }
                 }
             }
         }
-        .task {
-            await checkPermissions()
-        }
-    }
-    
-    private func checkPermissions() async {
-        if let h = droplet.host {
-            micStatus = h.permissions.status(for: .microphone)
+        .sheet(isPresented: $showingWizard) {
+            if let detector = droplet.detector {
+                ThumpCalibrationWizard(detector: detector)
+            }
         }
     }
 }
 
 private struct ActionConfigRow: View {
+    let host: DropletHost
     let taps: Int
     let title: String
     
     @AppStorage var actionType: String
     @AppStorage var actionPayload: String
     
-    init(taps: Int, title: String) {
+    init(host: DropletHost, taps: Int, title: String) {
+        self.host = host
         self.taps = taps
         self.title = title
         self._actionType = AppStorage(wrappedValue: ThumpActionType.none.rawValue, "thump.actionType.\(taps)")
@@ -105,7 +100,13 @@ private struct ActionConfigRow: View {
     var body: some View {
         VStack(spacing: 0) {
             DropletControlRow(title: title, icon: "hand.tap") {
-                Picker("Action Type", selection: $actionType) {
+                Picker("Action Type", selection: Binding(
+                    get: { actionType },
+                    set: { new in
+                        actionType = new
+                        requestPermission(for: new)
+                    }
+                )) {
                     ForEach(ThumpActionType.allCases) { type in
                         Text(type.rawValue).tag(type.rawValue)
                     }
@@ -129,5 +130,36 @@ private struct ActionConfigRow: View {
                 }
             }
         }
+    }
+    
+    private func requestPermission(for action: String) {
+        Task {
+            if action == ThumpActionType.screenshot.rawValue {
+                _ = await host.permissions.request(.screenCapture)
+            } else if action == ThumpActionType.playPause.rawValue || action == ThumpActionType.muteUnmute.rawValue {
+                _ = await host.permissions.request(.accessibility)
+            } else if action == ThumpActionType.appleScript.rawValue {
+                _ = await host.permissions.request(.appleEvents)
+            }
+        }
+    }
+}
+
+private struct LiveSensorView: View {
+    @ObservedObject var detector: ThumpDetector
+    
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(AdaptiveColors.buttonBackgroundAuto)
+                
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(AdaptiveColors.selectionBlueAuto)
+                    .frame(width: max(0, min(geo.size.width, geo.size.width * CGFloat(detector.waveformData))))
+                    .animation(.interactiveSpring(response: 0.2, dampingFraction: 0.6), value: detector.waveformData)
+            }
+        }
+        .frame(height: 12)
     }
 }
