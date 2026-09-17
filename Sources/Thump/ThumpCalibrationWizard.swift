@@ -170,10 +170,12 @@ struct ThumpCalibrationWizard: View {
                 
                 if step < 4 {
                     Button("Next") {
-                        step += 1
-                        collector.setStep(step)
-                        if step == 4 {
-                            applyComputedSettings()
+                        withAnimation {
+                            step += 1
+                            collector.setStep(step)
+                            if step == 4 {
+                                applyComputedSettings()
+                            }
                         }
                     }
                     .buttonStyle(DroppyAccentButtonStyle())
@@ -201,7 +203,23 @@ struct ThumpCalibrationWizard: View {
         }
         .onReceive(detector.$waveformData) { val in
             if step < 4 {
+                let currentStep = step
                 collector.processWaveformSample(val)
+                
+                if canAdvance && step == currentStep {
+                    // Auto-advance with a slight delay so the final progress dot is visible before the screen changes
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        if step == currentStep && canAdvance {
+                            withAnimation {
+                                step += 1
+                                collector.setStep(step)
+                                if step == 4 {
+                                    applyComputedSettings()
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

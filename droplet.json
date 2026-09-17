@@ -1,7 +1,7 @@
 {
   "id": "thump",
   "name": "Thump",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "summary": "Turns taps on your MacBook into instant actions.",
   "description": "Thump detects physical taps on your MacBook's palm rest using the built-in accelerometer or microphone. You can assign different actions (like running an AppleScript or Shell Command) to double, triple, or quad taps.",
   "category": "Productivity",
