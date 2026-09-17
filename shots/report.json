@@ -45,7 +45,7 @@
       "live-activity"
     ],
     "typeID" : "thump",
-    "version" : "1.0.0"
+    "version" : "1.0.1"
   },
   "expandedSurfaces" : [
 
@@ -63,12 +63,12 @@
   },
   "log" : [
     {
-      "at" : "2026-09-17T16:14:03Z",
+      "at" : "2026-09-17T16:27:25Z",
       "level" : "info",
       "message" : "Thump activated"
     },
     {
-      "at" : "2026-09-17T16:14:03Z",
+      "at" : "2026-09-17T16:27:25Z",
       "level" : "info",
       "message" : "ThumpDetector: Started using Accelerometer."
     }

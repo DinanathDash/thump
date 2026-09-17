@@ -1,31 +1,46 @@
 # Thump
 
-A Droplet for [Droppy](https://getdroppy.app), built with
-[DroppyKit](https://getdroppy.app/docs/droppykit).
+Turns physical taps on your MacBook into instant, powerful actions. 
 
-## Developing
+Thump uses your MacBook's built-in sensors to detect physical taps on the palm rest area. By double, triple, or quad-tapping, you can trigger instant actions like taking screenshots, controlling media, launching apps, or running custom shell scripts—all without lifting a finger off the chassis!
 
-```bash
-droppykit run        # open it in Droppy's Settings panel
-droppykit build      # produce Thump.droplet
-droppykit validate   # the checks a submission runs
-droppykit submit     # open the submission form, filled in from this checkout
-```
+Built as a beautiful Droplet for [Droppy](https://getdroppy.app), Thump sits perfectly in your menu bar and dynamic island for seamless integration into macOS.
 
-## With a coding agent
+## Features
 
-Open this folder in Claude Code, Codex or Cursor. `AGENTS.md` is the brief
-they read first, and `.mcp.json` / `.cursor/mcp.json` connect the DroppyKit
-MCP server, which gives them the build, the checks, pictures of every surface
-and an install into Droppy Playground as tools. Codex registers the server
-once per Mac: `codex mcp add droppykit -- path/to/droppykit/Scripts/droppykit mcp`.
-Run `droppykit agent` again after moving this folder or the SDK checkout.
+- **Custom Tap Sequences:** Trigger distinct actions for double, triple, and quad taps.
+- **Auto-Calibration Wizard:** Thump comes with a gorgeous UI wizard to calibrate your exact tap strength and speed, creating a personalized threshold profile just for you.
+- **Deep Action Integration:**
+  - Launch Applications
+  - Run Apple Shortcuts
+  - Execute custom AppleScript & Shell Commands
+  - Lock your Mac
+  - Take instant Screenshots (with native shutter sounds!)
+  - Native Media Controls (Play/Pause, Volume, Mute)
+  - Native Screen Brightness Controls
+- **Beautiful HUD:** Shows a live Dynamic Island / Notch Wing HUD confirming exactly how many taps were registered and which action was fired.
 
-## Before submitting
+## Installation
 
-- Replace `Thump.icon` with real artwork, in Icon Composer.
-- Replace `Assets/Creator.png` with your own square, unrounded mark.
-- Fill in `summary`, `description`, `creator` and `source` in `droplet.json`.
-- Push this repository, then `droppykit submit`: it opens
-  [getdroppy.app/submit-droplet](https://getdroppy.app/submit-droplet) with the
-  repository, the commit and the id filled in.
+You can install Thump directly from the [Droppy Store](https://getdroppy.app/droplets).
+
+### Local Testing via Droppy Playground
+If you'd like to test Thump locally before it's officially approved on the Droppy Store, you can use the [Droppy Playground](https://getdroppy.app/download/playground):
+
+1. Clone this repository.
+2. Build the droplet using DroppyKit: `droppykit build`
+3. Copy the compiled bundle to your Playground Droplets folder:
+   ```bash
+   cp .build/Thump.droplet ~/Library/Application\ Support/Droppy\ Playground/Droplets/thump/Thump.droplet
+   ```
+4. Restart Droppy Playground, and Thump will appear in your Local Droplets!
+
+## Requirements
+
+- macOS 14.0 or newer
+- Droppy 15.3.0 or newer
+- A MacBook with a built-in accelerometer
+
+## License
+
+Thump is open-source software licensed under the MIT License. See the `LICENSE` file for more details.
