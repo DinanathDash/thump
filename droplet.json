@@ -2,27 +2,32 @@
   "id": "thump",
   "name": "Thump",
   "version": "1.0.0",
-  "summary": "One line about Thump",
-  "description": "A longer description, in plain paragraphs.",
+  "summary": "Turns taps on your MacBook into instant actions.",
+  "description": "Thump detects physical taps on your MacBook's palm rest using the built-in accelerometer or microphone. You can assign different actions (like running an AppleScript or Shell Command) to double, triple, or quad taps.",
   "category": "Productivity",
   "kit": {
     "abi": 1,
-    "minAPI": "1.6.0"
+    "minAPI": "1.8.1"
   },
   "minAppVersion": "15.3.0",
-  "capabilities": [],
+  "capabilities": [
+    "microphone",
+    "apple-events"
+  ],
   "surfaces": [
-    "shelf-widget"
+    "shelf-widget",
+    "settings-pane",
+    "live-activity"
   ],
   "icon": "Thump.icon",
   "creator": {
-    "name": "Your name",
+    "name": "Dinanath Dash",
     "kind": "community",
-    "url": "https://example.com",
+    "url": "https://dinanath.dev",
     "avatar": "Creator.png"
   },
   "source": {
-    "repository": "https://github.com/you/thump",
+    "repository": "https://github.com/DinanathDash/thump",
     "license": "MIT"
   },
   "keywords": []

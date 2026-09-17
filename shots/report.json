@@ -1,0 +1,150 @@
+{
+  "activation" : {
+    "active" : true,
+    "error" : null
+  },
+  "activity" : [
+
+  ],
+  "artwork" : {
+    "creatorAvatar" : "ok",
+    "icon" : "ok"
+  },
+  "capabilities" : {
+    "declared" : [
+      "microphone",
+      "apple-events"
+    ],
+    "granted" : [
+      "apple-events",
+      "microphone"
+    ]
+  },
+  "droplet" : {
+    "capabilities" : [
+      "microphone",
+      "apple-events"
+    ],
+    "category" : "Productivity",
+    "creator" : "Dinanath Dash",
+    "icon" : "Thump.icon",
+    "id" : "thump",
+    "kit" : {
+      "abi" : 1,
+      "minAPI" : "1.8.1"
+    },
+    "minAppVersion" : "15.3.0",
+    "name" : "Thump",
+    "summary" : "Turns taps on your MacBook into instant actions.",
+    "surfaces" : [
+      "shelf-widget",
+      "settings-pane",
+      "live-activity"
+    ],
+    "typeID" : "thump",
+    "version" : "1.0.0"
+  },
+  "expandedSurfaces" : [
+
+  ],
+  "harness" : {
+    "abi" : 1,
+    "apiVersion" : "1.8.1"
+  },
+  "liveActivity" : {
+    "publishing" : false,
+    "seat" : "none(idle)"
+  },
+  "lockScreen" : {
+    "publishing" : false
+  },
+  "log" : [
+    {
+      "at" : "2026-09-16T21:01:04Z",
+      "level" : "info",
+      "message" : "Thump activated"
+    },
+    {
+      "at" : "2026-09-16T21:01:04Z",
+      "level" : "info",
+      "message" : "ThumpDetector: Started using Accelerometer."
+    }
+  ],
+  "manifest" : {
+    "loaded" : true,
+    "path" : "\/Users\/dinanathdash\/Documents\/Projects\/thump\/droplet.json",
+    "problem" : null
+  },
+  "problems" : [
+
+  ],
+  "schema" : "droppykit-harness-report\/1",
+  "shelfWidgets" : [
+    {
+      "contentHeight" : "fixed(68.0)",
+      "id" : "thump",
+      "preferredPairedWidth" : 190,
+      "preferredSoloWidth" : 380,
+      "systemImage" : "hand.tap.fill",
+      "title" : "Thump"
+    }
+  ],
+  "shots" : [
+    "\/Users\/dinanathdash\/Documents\/Projects\/thump\/shots\/overview.png",
+    "\/Users\/dinanathdash\/Documents\/Projects\/thump\/shots\/shelf-widget.png",
+    "\/Users\/dinanathdash\/Documents\/Projects\/thump\/shots\/live-activity.png",
+    "\/Users\/dinanathdash\/Documents\/Projects\/thump\/shots\/hud.png",
+    "\/Users\/dinanathdash\/Documents\/Projects\/thump\/shots\/expanded-surface.png",
+    "\/Users\/dinanathdash\/Documents\/Projects\/thump\/shots\/settings-pane.png",
+    "\/Users\/dinanathdash\/Documents\/Projects\/thump\/shots\/lock-screen.png",
+    "\/Users\/dinanathdash\/Documents\/Projects\/thump\/shots\/menu-bar.png",
+    "\/Users\/dinanathdash\/Documents\/Projects\/thump\/shots\/capabilities.png",
+    "\/Users\/dinanathdash\/Documents\/Projects\/thump\/shots\/preferences.png",
+    "\/Users\/dinanathdash\/Documents\/Projects\/thump\/shots\/activity.png"
+  ],
+  "surfaces" : [
+    {
+      "declared" : true,
+      "implemented" : true,
+      "surface" : "shelf-widget",
+      "verdict" : "provided"
+    },
+    {
+      "declared" : true,
+      "implemented" : true,
+      "surface" : "live-activity",
+      "verdict" : "provided"
+    },
+    {
+      "declared" : false,
+      "implemented" : false,
+      "surface" : "expanded-surface",
+      "verdict" : "not-provided"
+    },
+    {
+      "declared" : true,
+      "implemented" : true,
+      "surface" : "settings-pane",
+      "verdict" : "provided"
+    },
+    {
+      "declared" : false,
+      "implemented" : false,
+      "surface" : "hud",
+      "verdict" : "not-provided"
+    },
+    {
+      "declared" : false,
+      "implemented" : false,
+      "surface" : "lock-screen-status",
+      "verdict" : "not-provided"
+    },
+    {
+      "declared" : false,
+      "implemented" : false,
+      "surface" : "menu-bar-extra",
+      "verdict" : "not-provided"
+    }
+  ],
+  "verdict" : "ok"
+}
