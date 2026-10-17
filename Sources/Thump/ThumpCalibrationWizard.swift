@@ -394,6 +394,7 @@ public struct ThumpWaveformView: View {
         GeometryReader { proxy in
             let width = proxy.size.width
             let height = proxy.size.height
+            let horizontalInset: CGFloat = 4
 
             ZStack {
                 // Background card
@@ -405,8 +406,8 @@ public struct ThumpWaveformView: View {
                 let thresholdY = height * (1.0 - thresholdNormalized)
 
                 Path { path in
-                    path.move(to: CGPoint(x: 8, y: thresholdY))
-                    path.addLine(to: CGPoint(x: width - 8, y: thresholdY))
+                    path.move(to: CGPoint(x: horizontalInset, y: thresholdY))
+                    path.addLine(to: CGPoint(x: width - horizontalInset, y: thresholdY))
                 }
                 .stroke(
                     Color.orange.opacity(0.85),
@@ -415,11 +416,12 @@ public struct ThumpWaveformView: View {
 
                 // Impulse curve
                 if values.count > 1 {
-                    let step = width / CGFloat(max(values.count - 1, 1))
+                    let availableWidth = max(width - (horizontalInset * 2), 1)
+                    let step = availableWidth / CGFloat(max(values.count - 1, 1))
 
                     Path { path in
                         for (i, val) in values.enumerated() {
-                            let x = CGFloat(i) * step
+                            let x = horizontalInset + CGFloat(i) * step
                             let clampedMagnitude = min(max(val * 2.8, 0.0), 1.0)
                             let y = height - (CGFloat(clampedMagnitude) * (height - 8)) - 4
 
@@ -440,6 +442,7 @@ public struct ThumpWaveformView: View {
                     )
                 }
             }
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
     }
 }
