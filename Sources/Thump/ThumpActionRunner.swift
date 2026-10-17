@@ -4,18 +4,18 @@ import DroppyKit
 
 public enum ThumpActionType: String, CaseIterable, Identifiable {
     case none = "None"
-    case launchApp = "Launch App"
-    case runShortcut = "Run Shortcut"
+    case launchApp = "Launch app"
+    case runShortcut = "Run shortcut"
     case appleScript = "AppleScript"
-    case shellCommand = "Shell Command"
-    case lockScreen = "Lock Screen"
-    case screenshot = "Take Screenshot"
-    case playPause = "Play / Pause Media"
-    case volumeUp = "Volume Up"
-    case volumeDown = "Volume Down"
-    case muteUnmute = "Mute / Unmute"
-    case brightnessUp = "Brightness Up"
-    case brightnessDown = "Brightness Down"
+    case shellCommand = "Shell command"
+    case lockScreen = "Lock screen"
+    case screenshot = "Take screenshot"
+    case playPause = "Play / pause media"
+    case volumeUp = "Volume up"
+    case volumeDown = "Volume down"
+    case muteUnmute = "Mute / unmute"
+    case brightnessUp = "Brightness up"
+    case brightnessDown = "Brightness down"
     
     public var id: String { rawValue }
 }
@@ -34,21 +34,21 @@ public final class ThumpActionRunner {
         
         guard let type = ThumpActionType(rawValue: typeRaw), type != .none else { return nil }
         
-        host.log.info("Executing \(type.rawValue) for \(taps) taps: \(payload)")
+        host.log.info("Executing \(type.rawValue) for \(taps) taps")
         
         switch type {
         case .none:
             break
         case .launchApp:
-            runShellCommand("open -a \"\(payload)\"")
+            runProcess(executable: "/usr/bin/open", arguments: ["-a", payload])
         case .appleScript:
-            runAppleScript(payload)
+            runProcess(executable: "/usr/bin/osascript", arguments: ["-e", payload])
         case .shellCommand:
-            runShellCommand(payload)
+            runProcess(executable: "/bin/zsh", arguments: ["-c", payload])
         case .runShortcut:
-            runShellCommand("shortcuts run \"\(payload)\"")
+            runProcess(executable: "/usr/bin/shortcuts", arguments: ["run", payload])
         case .lockScreen:
-            runAppleScript("tell application \"System Events\" to key code 12 using {command down, control down}")
+            runProcess(executable: "/usr/bin/osascript", arguments: ["-e", "tell application \"System Events\" to key code 12 using {command down, control down}"])
         case .screenshot:
             takeScreenshot()
         case .playPause:
@@ -65,30 +65,29 @@ public final class ThumpActionRunner {
             simulateMediaKey(keyCode: 3) // NX_KEYTYPE_BRIGHTNESS_DOWN
         }
         
-        return "\(taps) Taps: \(type.rawValue)"
+        return "\(taps) taps"
     }
     
-    private func runAppleScript(_ script: String) {
-        guard !script.isEmpty else { return }
-        Task {
-            if let appleScript = NSAppleScript(source: script) {
-                var errorInfo: NSDictionary? = nil
-                appleScript.executeAndReturnError(&errorInfo)
-                if let errorInfo = errorInfo {
-                    host.log.error("AppleScript error: \(errorInfo)")
+    private func runProcess(executable: String, arguments: [String], timeout: TimeInterval = 5.0) {
+        guard !executable.isEmpty else { return }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        
+        do {
+            try process.run()
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [weak process] in
+                guard let process = process else { return }
+                if process.isRunning {
+                    process.terminate()
+                    Task { @MainActor in
+                        self.host.log.error("Process \(executable) timed out and was terminated.")
+                    }
                 }
             }
+        } catch {
+            host.log.error("Process execution error: \(error.localizedDescription)")
         }
-    }
-    
-    private func runShellCommand(_ command: String) {
-        guard !command.isEmpty else { return }
-        // Escape quotes and backslashes for AppleScript string literal
-        let escapedCommand = command
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        let script = "do shell script \"\(escapedCommand)\""
-        runAppleScript(script)
     }
     
     private func simulateMediaKey(keyCode: Int32) {
@@ -127,22 +126,16 @@ public final class ThumpActionRunner {
     }
     
     private func takeScreenshot() {
-        Task {
-            guard let cgImage = CGDisplayCreateImage(CGMainDisplayID()) else { return }
-            let bitmapRep = NSBitmapImageRep(cgImage: cgImage)
-            guard let data = bitmapRep.representation(using: .png, properties: [:]) else { return }
+        if let desktopURL = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd 'at' h.mm.ss a"
+            let filename = "Screenshot \(formatter.string(from: Date())).png"
+            let fileURL = desktopURL.appendingPathComponent(filename)
             
-            if let sound = NSSound(named: "Screen Capture") ?? NSSound(contentsOfFile: "/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/system/Screen capture.aif", byReference: true) {
-                sound.play()
-            }
-            
-            if let desktopURL = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first {
-                let formatter = DateFormatter()
-                formatter.dateFormat = "yyyy-MM-dd 'at' h.mm.ss a"
-                let filename = "Screenshot \(formatter.string(from: Date())).png"
-                let fileURL = desktopURL.appendingPathComponent(filename)
-                try? data.write(to: fileURL)
-            }
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+            process.arguments = [fileURL.path]
+            try? process.run()
         }
     }
 }

@@ -1,20 +1,12 @@
-# Changelog
+## [1.0.1] - 2026-09-24
 
-All notable changes to the Droplet are documented here.
-
----
-
-## 1.0.1 - Calibration Wizard & Refinements
-
-- Added auto-advance and animations to the calibration wizard.
-- Added new system actions and refined knock detection sensitivity.
-- Updated the calibration wizard waveform UI.
-- Added listening state handling to the droplet and migrated storage to host preferences.
-- Added MIT license and updated documentation.
+- Thump detects physical taps on your MacBook's palm rest using the built-in accelerometer.
+- You can assign different actions (like running an AppleScript or Shell Command) to double, triple, or quad taps.
+- Includes an auto-calibration wizard to tune the knock detector to your MacBook's chassis.
 
 ---
 
-## 1.0.0 - Initial Release
+## [1.0.0] - 2026-09-22
 
 - Scaffolded initial Thump droplet with DroppyKit integration.
 - Implemented tap detection, action runner, settings pane, and live activity support.

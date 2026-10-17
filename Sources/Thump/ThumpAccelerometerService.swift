@@ -2,106 +2,142 @@ import Foundation
 import IOKit
 import IOKit.hid
 
-struct ThumpSample: Equatable {
-    let x: Double
-    let y: Double
-    let z: Double
-    let timestamp: TimeInterval
+// =============================================================================
+// ACKNOWLEDGEMENT:
+// Low-level Apple Silicon SPU HID usage page IDs and raw IMU packet offsets
+// used below were referenced from `nocnoc` (commit: 00b283c2dbab1c975eca07cccbc4d147686db3b2):
+// https://github.com/shaircast/nocnoc
+// =============================================================================
+
+/// Encapsulates a raw 3-axis accelerometer sample read from the hardware.
+public struct ThumpSample: Equatable, Sendable {
+    public let x: Double
+    public let y: Double
+    public let z: Double
+    public let timestamp: TimeInterval
+
+    public init(x: Double, y: Double, z: Double, timestamp: TimeInterval) {
+        self.x = x
+        self.y = y
+        self.z = z
+        self.timestamp = timestamp
+    }
 }
 
-final class ThumpAccelerometerService {
-    private static let vendorUsagePage = 0xFF00
-    private static let accelerometerUsage = 3
-    private static let imuReportLength = 22
-    private static let imuPayloadOffset = 6
-    static let reportBufferSize = 4096
-    private static let accelScale = 65536.0
+/// Service managing communication with Apple Silicon SPU accelerometer hardware via IOKit HID APIs.
+public final class ThumpAccelerometerService {
+    // SPU HID hardware parameters
+    private static let spuUsagePage = 0xFF00
+    private static let spuAccelerometerUsage = 3
+    private static let packetByteLength = 22
+    private static let payloadStartOffset = 6
+    private static let bufferCapacity = 4096
+    private static let rawScaleFactor = 65536.0
 
-    private static let reportCallback: IOHIDReportWithTimeStampCallback = { context, _, _, _, _, report, reportLength, _ in
-        guard let context else { return }
-        let service = Unmanaged<ThumpAccelerometerService>.fromOpaque(context).takeUnretainedValue()
-        service.handleReport(report, length: reportLength)
+    /// Callback invoked whenever a new sample is received from the sensor queue.
+    public var onSample: ((ThumpSample) -> Void)?
+
+    private let processingQueue = DispatchQueue(label: "com.droppy.thump.accelerometer", qos: .userInteractive)
+    private var activeDeviceReferences: [IOHIDDevice] = []
+    private var isActive = false
+
+    public init() {}
+
+    deinit {
+        stop()
     }
 
-    var onSample: ((ThumpSample) -> Void)?
-
-    private let queue = DispatchQueue(label: "thump.accelerometer", qos: .userInteractive)
-    private var deviceHandles: [DeviceHandle] = []
-    private var isRunning = false
-
-    func available() -> Bool {
-        !matchingAccelerometerServices().isEmpty
+    /// Verifies if a compatible Apple SPU accelerometer device is present on this Mac.
+    public func available() -> Bool {
+        !discoverAccelerometerServices().isEmpty
     }
 
-    func start() -> Bool {
-        guard !isRunning else { return true }
+    /// Activates sensor reporting and registers input report callbacks.
+    public func start() -> Bool {
+        guard !isActive else { return true }
 
-        wakeDrivers()
-        let services = matchingAccelerometerServices()
-        guard !services.isEmpty else {
-            return false
-        }
+        requestDriverState()
+        let matchingServices = discoverAccelerometerServices()
+        guard !matchingServices.isEmpty else { return false }
 
-        let context = Unmanaged.passUnretained(self).toOpaque()
-        var openedHandles: [DeviceHandle] = []
+        var openedDevices: [IOHIDDevice] = []
+        let unretainedSelf = Unmanaged.passUnretained(self).toOpaque()
 
-        for service in services {
+        for service in matchingServices {
             guard let device = IOHIDDeviceCreate(kCFAllocatorDefault, service) else {
                 IOObjectRelease(service)
                 continue
             }
 
-            let status = IOHIDDeviceOpen(device, IOOptionBits(kIOHIDOptionsTypeNone))
-            guard status == kIOReturnSuccess else {
+            let openResult = IOHIDDeviceOpen(device, IOOptionBits(kIOHIDOptionsTypeNone))
+            guard openResult == kIOReturnSuccess else {
                 IOObjectRelease(service)
                 continue
             }
 
-            let handle = DeviceHandle(device: device)
-            handle.activate(queue: queue, callback: Self.reportCallback, context: context)
-            openedHandles.append(handle)
+            let reportBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: Self.bufferCapacity)
+
+            IOHIDDeviceSetDispatchQueue(device, processingQueue)
+            IOHIDDeviceRegisterInputReportWithTimeStampCallback(
+                device,
+                reportBuffer,
+                Self.bufferCapacity,
+                { context, _, _, _, _, report, reportLength, _ in
+                    guard let context else { return }
+                    let instance = Unmanaged<ThumpAccelerometerService>.fromOpaque(context).takeUnretainedValue()
+                    instance.processIncomingReport(report, length: reportLength)
+                },
+                unretainedSelf
+            )
+
+            IOHIDDeviceSetCancelHandler(device) {
+                IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
+                reportBuffer.deallocate()
+            }
+
+            IOHIDDeviceActivate(device)
+            openedDevices.append(device)
             IOObjectRelease(service)
         }
 
-        if openedHandles.isEmpty {
-            return false
-        }
-
-        deviceHandles = openedHandles
-        isRunning = true
+        guard !openedDevices.isEmpty else { return false }
+        activeDeviceReferences = openedDevices
+        isActive = true
         return true
     }
 
-    func stop() {
-        guard isRunning else { return }
-        for handle in deviceHandles {
-            handle.stop()
+    /// Deactivates sensor reporting and releases device handles.
+    public func stop() {
+        guard isActive else { return }
+        for device in activeDeviceReferences {
+            IOHIDDeviceCancel(device)
         }
-        deviceHandles.removeAll()
-        isRunning = false
+        activeDeviceReferences.removeAll()
+        isActive = false
     }
 
-    private func handleReport(_ report: UnsafeMutablePointer<UInt8>, length: CFIndex) {
-        guard isRunning else { return }
-        guard length == Self.imuReportLength else { return }
+    // MARK: - Private Helpers
 
-        let xRaw = Self.int32LE(report, offset: Self.imuPayloadOffset)
-        let yRaw = Self.int32LE(report, offset: Self.imuPayloadOffset + 4)
-        let zRaw = Self.int32LE(report, offset: Self.imuPayloadOffset + 8)
+    private func processIncomingReport(_ report: UnsafeMutablePointer<UInt8>, length: CFIndex) {
+        guard isActive, length == Self.packetByteLength else { return }
+
+        let rawX = readLittleEndianInt32(from: report, at: Self.payloadStartOffset)
+        let rawY = readLittleEndianInt32(from: report, at: Self.payloadStartOffset + 4)
+        let rawZ = readLittleEndianInt32(from: report, at: Self.payloadStartOffset + 8)
 
         let sample = ThumpSample(
-            x: Double(xRaw) / Self.accelScale,
-            y: Double(yRaw) / Self.accelScale,
-            z: Double(zRaw) / Self.accelScale,
+            x: Double(rawX) / Self.rawScaleFactor,
+            y: Double(rawY) / Self.rawScaleFactor,
+            z: Double(rawZ) / Self.rawScaleFactor,
             timestamp: ProcessInfo.processInfo.systemUptime
         )
         onSample?(sample)
     }
 
-    private func wakeDrivers() {
-        let matching = IOServiceMatching("AppleSPUHIDDriver")
+    private func requestDriverState() {
         var iterator: io_iterator_t = 0
-        guard IOServiceGetMatchingServices(kIOMainPortDefault, matching, &iterator) == KERN_SUCCESS else {
+        let matchingDictionary = IOServiceMatching("AppleSPUHIDDriver")
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, matchingDictionary, &iterator) == KERN_SUCCESS else {
             return
         }
 
@@ -115,76 +151,42 @@ final class ThumpAccelerometerService {
         }
     }
 
-    private func matchingAccelerometerServices() -> [io_service_t] {
-        let matching = IOServiceMatching("AppleSPUHIDDevice")
+    private func discoverAccelerometerServices() -> [io_service_t] {
         var iterator: io_iterator_t = 0
-        guard IOServiceGetMatchingServices(kIOMainPortDefault, matching, &iterator) == KERN_SUCCESS else {
+        let matchingDictionary = IOServiceMatching("AppleSPUHIDDevice")
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, matchingDictionary, &iterator) == KERN_SUCCESS else {
             return []
         }
 
         defer { IOObjectRelease(iterator) }
 
-        var matches: [io_service_t] = []
+        var foundServices: [io_service_t] = []
         while case let service = IOIteratorNext(iterator), service != 0 {
-            let usagePage = propertyInt(service, key: "PrimaryUsagePage")
-            let usage = propertyInt(service, key: "PrimaryUsage")
+            let usagePage = readPropertyInt(service, key: "PrimaryUsagePage")
+            let usage = readPropertyInt(service, key: "PrimaryUsage")
 
-            if usagePage == Self.vendorUsagePage, usage == Self.accelerometerUsage {
-                matches.append(service)
+            if usagePage == Self.spuUsagePage, usage == Self.spuAccelerometerUsage {
+                foundServices.append(service)
             } else {
                 IOObjectRelease(service)
             }
         }
-        return matches
+        return foundServices
     }
 
-    private func propertyInt(_ service: io_service_t, key: String) -> Int? {
-        guard
-            let property = IORegistryEntryCreateCFProperty(service, key as CFString, kCFAllocatorDefault, 0)?
-                .takeRetainedValue()
-        else {
+    private func readPropertyInt(_ service: io_service_t, key: String) -> Int? {
+        guard let rawProp = IORegistryEntryCreateCFProperty(service, key as CFString, kCFAllocatorDefault, 0)?
+            .takeRetainedValue() else {
             return nil
         }
-
-        return (property as? NSNumber)?.intValue
+        return (rawProp as? NSNumber)?.intValue
     }
 
-    private static func int32LE(_ report: UnsafeMutablePointer<UInt8>, offset: Int) -> Int32 {
-        let b0 = UInt32(report[offset])
-        let b1 = UInt32(report[offset + 1]) << 8
-        let b2 = UInt32(report[offset + 2]) << 16
-        let b3 = UInt32(report[offset + 3]) << 24
-        return Int32(bitPattern: b0 | b1 | b2 | b3)
-    }
-}
-
-private final class DeviceHandle {
-    let device: IOHIDDevice
-    let buffer: UnsafeMutablePointer<UInt8>
-
-    init(device: IOHIDDevice) {
-        self.device = device
-        self.buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: ThumpAccelerometerService.reportBufferSize)
-    }
-
-    deinit {
-        buffer.deallocate()
-    }
-
-    func activate(queue: DispatchQueue, callback: @escaping IOHIDReportWithTimeStampCallback, context: UnsafeMutableRawPointer) {
-        IOHIDDeviceSetDispatchQueue(device, queue)
-        IOHIDDeviceRegisterInputReportWithTimeStampCallback(
-            device,
-            buffer,
-            ThumpAccelerometerService.reportBufferSize,
-            callback,
-            context
-        )
-        IOHIDDeviceActivate(device)
-    }
-
-    func stop() {
-        IOHIDDeviceCancel(device)
-        IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
+    private func readLittleEndianInt32(from buffer: UnsafeMutablePointer<UInt8>, at offset: Int) -> Int32 {
+        var value: UInt32 = 0
+        withUnsafeMutableBytes(of: &value) { bytes in
+            bytes.copyBytes(from: UnsafeRawBufferPointer(start: buffer + offset, count: 4))
+        }
+        return Int32(bitPattern: UInt32(littleEndian: value))
     }
 }

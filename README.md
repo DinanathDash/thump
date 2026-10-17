@@ -2,9 +2,9 @@
 
 Turns physical taps on your MacBook into instant, powerful actions. 
 
-Thump uses your MacBook's built-in sensors to detect physical taps on the palm rest area. By double, triple, or quad-tapping, you can trigger instant actions like taking screenshots, controlling media, launching apps, or running custom shell scripts—all without lifting a finger off the chassis!
+Thump uses your MacBook's built-in sensors to detect physical taps on the palm rest area. By double, triple, or quad-tapping, you can trigger instant actions like taking screenshots, controlling media, launching apps, or running custom shell scripts, all without lifting a finger off the chassis!
 
-Built as a beautiful Droplet for [Droppy](https://getdroppy.app), Thump sits perfectly in your menu bar and dynamic island for seamless integration into macOS.
+Built as a beautiful Droplet for [Droppy](https://getdroppy.app), Thump sits perfectly in your dynamic island for seamless integration into macOS.
 
 ## Features
 
@@ -37,9 +37,13 @@ If you'd like to test Thump locally before it's officially approved on the Dropp
 
 ## Requirements
 
-- macOS 14.0 or newer
+- macOS 26.0 or newer
 - Droppy 15.3.0 or newer
 - A MacBook with a built-in accelerometer
+
+## Acknowledgements
+
+Thump references reverse-engineered Apple Silicon SPU HID parameters from the open-source project [nocnoc](https://github.com/shaircast/nocnoc) at commit `00b283c2dbab1c975eca07cccbc4d147686db3b2`. For full details, see [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md).
 
 ## License
 
