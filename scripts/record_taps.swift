@@ -45,7 +45,7 @@ final class TapRecorderEngine {
 
     func run(durationSeconds: Double, outputJsonPath: String) {
         guard accelService.available() else {
-            print("❌ Error: AppleSPU accelerometer is not available on this hardware.")
+            print("[ERROR] AppleSPU accelerometer is not available on this hardware.")
             exit(1)
         }
 
@@ -66,7 +66,7 @@ final class TapRecorderEngine {
             fflush(stdout)
             Thread.sleep(forTimeInterval: 1.0)
         }
-        print(" 🚀 RECORDING NOW! (Start tapping!)")
+        print(" [RECORDING] Session active - start tapping.")
         print("-------------------------------------------------------------------\n")
 
         startTime = ProcessInfo.processInfo.systemUptime
@@ -76,7 +76,7 @@ final class TapRecorderEngine {
         }
 
         guard accelService.start() else {
-            print("❌ Error: Failed to start AppleSPU accelerometer service.")
+            print("[ERROR] Failed to start AppleSPU accelerometer service.")
             exit(1)
         }
         isRunning = true
@@ -101,7 +101,7 @@ final class TapRecorderEngine {
         let effectiveHz = Double(sampleCount) / max(totalTime, 0.001)
 
         print("\n-------------------------------------------------------------------")
-        print("🏁 RECORDING COMPLETED in \(String(format: "%.1f", totalTime))s")
+        print("[COMPLETED] RECORDING FINISHED in \(String(format: "%.1f", totalTime))s")
         print("Total Samples Processed: \(sampleCount) (~\(String(format: "%.1f", effectiveHz)) Hz)")
         print("Total Impulses Detected: \(recordedImpulses.count)")
         print("Total Sequences Formed:  \(recordedSequences.count)")
@@ -169,7 +169,7 @@ final class TapRecorderEngine {
             recordedImpulses.append(impulse)
             pendingSequenceTaps.append(impulse)
 
-            print(String(format: "  [+%.2fs] 💥 Tap #%d | Energy: %.3f | Jerk: %.3f | Gap: %.0f ms",
+            print(String(format: "  [+%.2fs] [TAP] Tap #%d | Energy: %.3f | Jerk: %.3f | Gap: %.0f ms",
                          relativeTimeS,
                          pendingSequenceTaps.count,
                          transientEnergy,
@@ -203,7 +203,7 @@ final class TapRecorderEngine {
         recordedSequences.append(sequence)
 
         let intervalStr = intervals.map { String(format: "%.0fms", $0) }.joined(separator: ", ")
-        print(String(format: "  👉 SEQUENCE COMPLETED: %d taps in %.0f ms [intervals: %@] (avg peak: %.3f)\n",
+        print(String(format: "  [SEQUENCE] Sequence completed: %d taps in %.0f ms [intervals: %@] (avg peak: %.3f)\n",
                      count,
                      durationMs,
                      intervalStr.isEmpty ? "single" : intervalStr,
@@ -215,7 +215,7 @@ final class TapRecorderEngine {
 
     private func printAnalysisAndRecommendations(sampleRateHz: Double) {
         guard !recordedSequences.isEmpty else {
-            print("\n⚠️  No tap sequences detected. Try tapping a bit firmer next time.")
+            print("\n[WARN] No tap sequences detected. Try tapping a bit firmer next time.")
             return
         }
 
@@ -230,7 +230,7 @@ final class TapRecorderEngine {
         let minPeak = allPeaks.min() ?? 0.05
         let maxPeak = allPeaks.max() ?? 0.25
 
-        print("\n📊 EMPIRICAL HUMAN TAP CHARACTERISTICS:")
+        print("\n[ANALYSIS] EMPIRICAL HUMAN TAP CHARACTERISTICS:")
         print("  - Inter-tap Cadence Interval: min=\(String(format: "%.0f", minInterval))ms, avg=\(String(format: "%.0f", avgInterval))ms, max=\(String(format: "%.0f", maxInterval))ms")
         print("  - Tap Impact Force (Energy):   min=\(String(format: "%.3f", minPeak)), avg=\(String(format: "%.3f", avgPeak)), max=\(String(format: "%.3f", maxPeak))")
         print("  - Ambient Noise Floor:         \(String(format: "%.4f", ambientNoiseEnvelope))")
@@ -242,7 +242,7 @@ final class TapRecorderEngine {
         // Grouping window should be ~1.4x the max normal interval so cadence isn't prematurely sliced
         let recGroupingWindow = max(0.28, min((maxInterval * 1.35) / 1000.0, 0.48))
 
-        print("\n💡 RECOMMENDED CALIBRATED CONFIGURATION:")
+        print("\n[RECOMMENDATION] CALIBRATED CONFIGURATION:")
         print("  - Threshold:       \(String(format: "%.3f", recThreshold)) (effective sensitivity)")
         print("  - Cooldown:        \(String(format: "%.3f", recCooldown)) s (\(Int(recCooldown * 1000)) ms debounce - prevents dropping fast taps)")
         print("  - Grouping Window: \(String(format: "%.3f", recGroupingWindow)) s (\(Int(recGroupingWindow * 1000)) ms completion timeout)")

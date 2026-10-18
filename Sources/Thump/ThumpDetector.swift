@@ -98,8 +98,11 @@ public final class ThumpDetector: ObservableObject {
     public func start() {
         guard !isStarted else { return }
         isStarted = true
+        ThumpLogger.log(String(format: "[DETECTOR] start() called. Config: threshold=%.4f, window=%.2fs, cooldown=%.3fs",
+              config.threshold, config.groupingWindow, config.cooldown))
         
         if tryStartAccelerometer() {
+            ThumpLogger.log("[DETECTOR] Accelerometer started successfully.")
             host.log.info("ThumpDetector: Started using Accelerometer.")
             isUsingAccelerometer = true
             isListening = true
@@ -107,6 +110,7 @@ public final class ThumpDetector: ObservableObject {
             return
         }
         
+        ThumpLogger.log("[ERROR] Accelerometer failed to start.")
         host.log.error("ThumpDetector: Failed to start Accelerometer.")
         isStarted = false
         isListening = false
@@ -114,6 +118,7 @@ public final class ThumpDetector: ObservableObject {
     }
     
     public func stop() {
+        ThumpLogger.log("[DETECTOR] stop() called.")
         isStarted = false
         isListening = false
         onStateChange?(false)
@@ -121,12 +126,21 @@ public final class ThumpDetector: ObservableObject {
     }
     
     private func commitTaps(count: Int) {
-        guard !isSuppressingActions else { return }
+        guard !isSuppressingActions else {
+            ThumpLogger.log("[DETECTOR] Actions suppressed (Calibration Wizard active). Ignoring \(count) taps.")
+            return
+        }
+        ThumpLogger.log("[TAP] commitTaps called for \(count) taps")
         if count >= 2 {
             let taps = min(count, 4)
             if let label = actionRunner.executeAction(forTaps: taps) {
+                ThumpLogger.log("[ACTION] Action successfully executed. Label: '\(label)'. Presenting Live Activity HUD.")
                 onThumpDetected?(label)
+            } else {
+                ThumpLogger.log("[WARN] executeAction returned nil for \(taps) taps (action is None or action execution failed).")
             }
+        } else {
+            ThumpLogger.log("[TAP] commitTaps received < 2 taps (\(count)). Discarding.")
         }
     }
     

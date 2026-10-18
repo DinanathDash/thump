@@ -1,5 +1,7 @@
 import SwiftUI
 import DroppyKit
+import AppKit
+import UniformTypeIdentifiers
 
 struct ThumpSettingsPane: View {
     @ObservedObject var droplet: ThumpDroplet
@@ -7,19 +9,32 @@ struct ThumpSettingsPane: View {
     
     @State private var showingWizard = false
     @State private var redrawCounter = 0
+    @State private var isExportingLogs = false
     var body: some View {
         DropletSettingsPane {
+            let available = ThumpAccelerometerService().available()
             DropletSettingsSection(header: { Text("Calibration") }) {
                 DropletSettingsCard {
-                    let available = ThumpAccelerometerService().available()
                     if available {
                         DropletToggleRow(title: "Enable thump", isOn: Binding(
                             get: { droplet.isListening },
                             set: { if $0 { droplet.detector?.start() } else { droplet.detector?.stop() } }
                         ))
                     } else {
-                        Text("This Mac does not have a supported accelerometer.")
-                            .foregroundStyle(.secondary)
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                                .font(.body)
+                                .padding(.top, 1)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Chassis Accelerometer Unavailable")
+                                    .font(.subheadline.weight(.semibold))
+                                Text("This Mac does not have a supported Apple Silicon internal accelerometer (Apple SPU). Thump requires hardware motion sensors to detect chassis taps.")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.vertical, DroppySpacing.xs)
                     }
                     
                     if droplet.isListening {
@@ -49,9 +64,15 @@ struct ThumpSettingsPane: View {
                             .padding(.top, DroppySpacing.sm)
                         }
                     } else if available {
-                        Text("Thump is stopped.")
-                            .foregroundStyle(.secondary)
-                            .padding(.vertical, DroppySpacing.sm)
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(Color.secondary.opacity(0.4))
+                                .frame(width: 8, height: 8)
+                            Text("Thump is stopped.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, DroppySpacing.xs)
                     }
                 }
             }
@@ -69,9 +90,36 @@ struct ThumpSettingsPane: View {
             DropletSettingsSection(header: { Text("Actions") }) {
                 DropletSettingsCard {
                     if let host = droplet.host {
-                        ActionConfigRow(host: host, taps: 2, title: "Double tap", globalRedraw: $redrawCounter)
-                        ActionConfigRow(host: host, taps: 3, title: "Triple tap", globalRedraw: $redrawCounter)
-                        ActionConfigRow(host: host, taps: 4, title: "Quad tap", globalRedraw: $redrawCounter)
+                        if !available {
+                            Text("Actions cannot trigger on this Mac because hardware motion sensors are unavailable.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .padding(.vertical, DroppySpacing.xs)
+                        } else {
+                            ActionConfigRow(host: host, taps: 2, title: "Double tap", globalRedraw: $redrawCounter)
+                            ActionConfigRow(host: host, taps: 3, title: "Triple tap", globalRedraw: $redrawCounter)
+                            ActionConfigRow(host: host, taps: 4, title: "Quad tap", globalRedraw: $redrawCounter)
+                        }
+                    }
+                }
+            }
+
+            DropletSettingsSection(header: { Text("Diagnostics") }) {
+                DropletSettingsCard {
+                    DropletControlRow(
+                        title: "Export diagnostic logs",
+                        infoTip: "Generates a compressed archive containing Thump sensor, impulse, and action logs."
+                    ) {
+                        HStack(spacing: 8) {
+                            Button(isExportingLogs ? "Exporting…" : "Export…") {
+                                exportLogs()
+                            }
+                            .disabled(isExportingLogs)
+
+                            Button("Reveal") {
+                                ThumpLogExporter.showLogsInFinder()
+                            }
+                        }
                     }
                 }
             }
@@ -96,6 +144,35 @@ struct ThumpSettingsPane: View {
         }
         .onDisappear {
             droplet.detector?.endVisualization()
+        }
+    }
+
+    private func exportLogs() {
+        isExportingLogs = true
+        Task {
+            defer { isExportingLogs = false }
+            do {
+                let tempZipURL = try await ThumpLogExporter.exportLogs()
+                defer {
+                    try? FileManager.default.removeItem(at: tempZipURL)
+                }
+
+                let panel = NSSavePanel()
+                panel.title = "Export Thump Logs"
+                panel.nameFieldStringValue = tempZipURL.lastPathComponent
+                panel.allowedContentTypes = [.zip]
+                panel.canCreateDirectories = true
+
+                if panel.runModal() == .OK, let destinationURL = panel.url {
+                    let fileManager = FileManager.default
+                    if fileManager.fileExists(atPath: destinationURL.path) {
+                        try fileManager.removeItem(at: destinationURL)
+                    }
+                    try fileManager.copyItem(at: tempZipURL, to: destinationURL)
+                }
+            } catch {
+                ThumpLogger.error("Failed to export logs: \(error.localizedDescription)")
+            }
         }
     }
 }
@@ -173,7 +250,7 @@ struct ActionConfigRow: View {
                 perm = .screenCapture
             } else if [ThumpActionType.playPause.rawValue, ThumpActionType.muteUnmute.rawValue, ThumpActionType.lockScreen.rawValue, ThumpActionType.brightnessUp.rawValue, ThumpActionType.brightnessDown.rawValue, ThumpActionType.volumeUp.rawValue, ThumpActionType.volumeDown.rawValue].contains(action) {
                 perm = .accessibility
-            } else if [ThumpActionType.appleScript.rawValue, ThumpActionType.shellCommand.rawValue, ThumpActionType.runShortcut.rawValue, ThumpActionType.launchApp.rawValue].contains(action) {
+            } else if [ThumpActionType.appleScript.rawValue, ThumpActionType.shellCommand.rawValue, ThumpActionType.runShortcut.rawValue, ThumpActionType.launchApp.rawValue, ThumpActionType.toggleMenuBar.rawValue].contains(action) {
                 perm = .appleEvents
             }
             if let perm = perm {

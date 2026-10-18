@@ -15,6 +15,7 @@ Built as a beautiful Droplet for [Droppy](https://getdroppy.app), Thump sits per
   - Run Apple Shortcuts
   - Execute custom AppleScript & Shell Commands
   - Lock your Mac
+  - Toggle Menu Bar (show / hide)
   - Take instant Screenshots (with native shutter sounds!)
   - Native Media Controls (Play/Pause, Volume, Mute)
   - Native Screen Brightness Controls

@@ -52,13 +52,19 @@ public final class ThumpAccelerometerService {
         !discoverAccelerometerServices().isEmpty
     }
 
+    private var sampleCount: Int = 0
+
     /// Activates sensor reporting and registers input report callbacks.
     public func start() -> Bool {
         guard !isActive else { return true }
 
         requestDriverState()
         let matchingServices = discoverAccelerometerServices()
-        guard !matchingServices.isEmpty else { return false }
+        ThumpLogger.log("[HARDWARE] Discovery: found \(matchingServices.count) AppleSPUHIDDevice matching service(s)")
+        guard !matchingServices.isEmpty else {
+            ThumpLogger.log("[ERROR] No compatible AppleSPU accelerometer found on this Mac.")
+            return false
+        }
 
         var openedDevices: [IOHIDDevice] = []
         let unretainedSelf = Unmanaged.passUnretained(self).toOpaque()
@@ -71,6 +77,7 @@ public final class ThumpAccelerometerService {
 
             let openResult = IOHIDDeviceOpen(device, IOOptionBits(kIOHIDOptionsTypeNone))
             guard openResult == kIOReturnSuccess else {
+                ThumpLogger.log("[ERROR] Failed to open IOHIDDevice (code \(openResult))")
                 IOObjectRelease(service)
                 continue
             }
@@ -100,15 +107,21 @@ public final class ThumpAccelerometerService {
             IOObjectRelease(service)
         }
 
-        guard !openedDevices.isEmpty else { return false }
+        guard !openedDevices.isEmpty else {
+            ThumpLogger.log("[ERROR] Failed to activate any accelerometer devices.")
+            return false
+        }
         activeDeviceReferences = openedDevices
         isActive = true
+        sampleCount = 0
+        ThumpLogger.log("[HARDWARE] Accelerometer activated with \(openedDevices.count) device reference(s).")
         return true
     }
 
     /// Deactivates sensor reporting and releases device handles.
     public func stop() {
         guard isActive else { return }
+        ThumpLogger.log("[HARDWARE] Stopping accelerometer (\(sampleCount) total samples read).")
         for device in activeDeviceReferences {
             IOHIDDeviceCancel(device)
         }
@@ -131,6 +144,11 @@ public final class ThumpAccelerometerService {
             z: Double(rawZ) / Self.rawScaleFactor,
             timestamp: ProcessInfo.processInfo.systemUptime
         )
+        sampleCount += 1
+        if sampleCount == 1 || sampleCount % 2400 == 0 {
+            let g = sqrt(sample.x * sample.x + sample.y * sample.y + sample.z * sample.z)
+            ThumpLogger.log(String(format: "[SENSOR] Streaming: sample #%d, G=%.3f (x=%.3f, y=%.3f, z=%.3f)", sampleCount, g, sample.x, sample.y, sample.z))
+        }
         onSample?(sample)
     }
 

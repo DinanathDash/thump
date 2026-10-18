@@ -48,9 +48,14 @@ public final class ThumpDroplet: NSObject, ObservableObject, Droplet {
         self.detector = detector
         
         let wasListening = host.preferences.value(forKey: "thump.isListening", default: false)
-        if wasListening && hasAnyAction() {
+        let anyAction = hasAnyAction()
+        ThumpLogger.log("ThumpDroplet activated. wasListening=\(wasListening), hasAnyAction=\(anyAction)")
+        if wasListening && anyAction {
             detector.start()
         } else {
+            if wasListening && !anyAction {
+                ThumpLogger.log("[WARN] Thump preference has isListening=true, but no actions are assigned. Set an action in Droplet Settings to start.")
+            }
             self.isListening = false
         }
     }

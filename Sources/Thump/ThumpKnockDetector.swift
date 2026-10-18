@@ -26,6 +26,7 @@ public final class ThumpKnockDetector {
 
     /// Lockout timestamp to suppress false positives during macroscopic laptop movement.
     private var macroscopicMotionLockoutUntil: TimeInterval = 0.0
+    private var lastLoggedPeakTime: TimeInterval = 0.0
 
     // MARK: - Lifecycle
 
@@ -41,6 +42,7 @@ public final class ThumpKnockDetector {
         lastRegisteredTapTime = -100.0
         previousSampleTime = 0.0
         macroscopicMotionLockoutUntil = 0.0
+        lastLoggedPeakTime = 0.0
     }
 
     // MARK: - Real-Time Processing
@@ -59,6 +61,7 @@ public final class ThumpKnockDetector {
             previousAcceleration = sample
             previousSampleTime = now
             isInitialized = true
+            ThumpLogger.log(String(format: "ThumpKnockDetector initialized with baseline G=%.3f", simd_length(sample)))
             return nil
         }
 
@@ -104,6 +107,8 @@ public final class ThumpKnockDetector {
         if isMacroscopicMotion {
             macroscopicMotionLockoutUntil = max(macroscopicMotionLockoutUntil, now + 0.25)
             if !recordedTapTimestamps.isEmpty {
+                ThumpLogger.log(String(format: "[WARN] Macroscopic motion lockout (highPass=%.3f, GOffset=%.3f, jerk=%.3f). Wiping %d recorded tap(s).",
+                      dynamicHighPassMagnitude, totalGOffset, jerkMagnitude, recordedTapTimestamps.count))
                 recordedTapTimestamps.removeAll()
             }
         }
@@ -125,9 +130,28 @@ public final class ThumpKnockDetector {
         let exceedsThreshold = transientEnergy > requiredThreshold
         let isTransientSpike = jerkMagnitude > requiredJerk
 
+        // Diagnostic logging whenever a noticeable impulse/vibration occurs
+        if (transientEnergy >= 0.012 || jerkMagnitude >= 0.012), (now - lastLoggedPeakTime > 0.040) {
+            lastLoggedPeakTime = now
+            let passed = exceedsThreshold && isRefractoryCleared && isMotionCleared && isTransientSpike
+            var reasons: [String] = []
+            if !exceedsThreshold { reasons.append(String(format: "energy %.4f <= req %.4f", transientEnergy, requiredThreshold)) }
+            if !isTransientSpike { reasons.append(String(format: "jerk %.4f <= req %.4f", jerkMagnitude, requiredJerk)) }
+            if !isRefractoryCleared { reasons.append(String(format: "cooldown (%.0fms < %.0fms)", (now - lastRegisteredTapTime) * 1000, currentCooldown * 1000)) }
+            if now < macroscopicMotionLockoutUntil { reasons.append("motion locked") }
+            if isTyping { reasons.append("typing active") }
+
+            let resultStr = passed ? "ACCEPTED" : "REJECTED [\(reasons.joined(separator: ", "))]"
+            ThumpLogger.log(String(format: "[IMPULSE] Peak: energy=%.4f (req=%.4f), jerk=%.4f (req=%.4f), G=%.2f -> %@",
+                  transientEnergy, requiredThreshold, jerkMagnitude, requiredJerk, simd_length(sample), resultStr))
+        }
+
         if exceedsThreshold && isRefractoryCleared && isMotionCleared && isTransientSpike {
             recordedTapTimestamps.append(now)
             lastRegisteredTapTime = now
+            let delta = recordedTapTimestamps.count > 1 ? String(format: " (+%.0fms)", (now - (recordedTapTimestamps.dropLast().last ?? now)) * 1000) : ""
+            ThumpLogger.log(String(format: "[TAP] Tap #%d registered%@. Total in active sequence: %d",
+                  recordedTapTimestamps.count, delta, recordedTapTimestamps.count))
         }
 
         // 7. Check if sequence is complete
@@ -152,6 +176,11 @@ public final class ThumpKnockDetector {
                 recordedTapTimestamps.removeAll()
                 if count >= 2 {
                     completedSequence = min(count, 4)
+                    ThumpLogger.log(String(format: "[SEQUENCE] Tap sequence completed with %d tap(s) (silence=%.2fs >= timeout=%.2fs). Forwarding to action runner.",
+                          count, silence, timeout))
+                } else {
+                    ThumpLogger.log(String(format: "[SEQUENCE] Tap sequence ended with only %d tap (silence=%.2fs >= timeout=%.2fs). Discarded: Thump requires at least 2 taps (Double tap) to trigger an action.",
+                          count, silence, timeout))
                 }
             }
         }
