@@ -59,12 +59,15 @@ struct ThumpSettingsPane: View {
                                     let rawProfile = droplet.host?.preferences.value(forKey: "thump.surfaceProfile", default: ThumpSurfaceProfile.dynamic.rawValue) ?? ThumpSurfaceProfile.dynamic.rawValue
                                     let activeProfile = ThumpSurfaceProfile.from(raw: rawProfile)
                                     let accelThreshold = droplet.host?.preferences.value(forKey: "thump.accelThreshold", default: activeProfile.defaultThreshold) ?? activeProfile.defaultThreshold
+                                    let sensitivity = droplet.host?.preferences.value(forKey: "thump.sensitivityMultiplier", default: 1.0) ?? 1.0
+                                    let effectiveThreshold = accelThreshold * (1.0 / min(max(sensitivity, 0.50), 1.50))
                                     let groupingWindow = droplet.host?.preferences.value(forKey: "thump.groupingWindow", default: activeProfile.defaultGroupingWindow) ?? activeProfile.defaultGroupingWindow
                                     let cooldown = droplet.host?.preferences.value(forKey: "thump.cooldown", default: activeProfile.defaultCooldown) ?? activeProfile.defaultCooldown
                                     
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text("Profile: \(activeProfile.displayName)")
-                                        Text("Threshold: \(String(format: "%.3f", accelThreshold))")
+                                        Text("Sensitivity: \(Int(round(sensitivity * 100)))%")
+                                        Text("Threshold: \(String(format: "%.3f", effectiveThreshold))")
                                         Text("Window: \(String(format: "%.2f s", groupingWindow))")
                                         Text("Cooldown: \(String(format: "%.2f s", cooldown))")
                                     }
@@ -160,6 +163,38 @@ struct ThumpSettingsPane: View {
                             .labelsHidden()
                             .pickerStyle(.menu)
                             .fixedSize()
+                        }
+
+                        DropletSettingsDivider()
+
+                        let sensitivityVal = droplet.host?.preferences.value(forKey: "thump.sensitivityMultiplier", default: 1.0) ?? 1.0
+                        let sensitivityBinding = Binding<Double>(
+                            get: {
+                                let val = droplet.host?.preferences.value(forKey: "thump.sensitivityMultiplier", default: 1.0) ?? 1.0
+                                return min(max(val * 100.0, 50.0), 150.0)
+                            },
+                            set: { newPercent in
+                                let multiplier = newPercent / 100.0
+                                droplet.host?.preferences.setValue(multiplier, forKey: "thump.sensitivityMultiplier")
+                                redrawCounter += 1
+                            }
+                        )
+
+                        DropletControlRow(
+                            title: "Tap sensitivity",
+                            infoTip: "Adjusts the physical knock force required. Higher values make Thump respond to lighter taps, while lower values require firmer knocks."
+                        ) {
+                            HStack(spacing: 10) {
+                                Slider(
+                                    value: sensitivityBinding,
+                                    in: 50.0...150.0,
+                                    step: 5.0
+                                )
+                                .labelsHidden()
+                                .frame(minWidth: 100, maxWidth: 140)
+
+                                DropletValuePill(text: "\(Int(round(sensitivityVal * 100)))%")
+                            }
                         }
                     }
                 }
@@ -389,7 +424,7 @@ private struct LiveSensorView: View {
     @ObservedObject var detector: ThumpDetector
     
     var body: some View {
-        ThumpWaveformView(values: detector.waveformHistory, threshold: detector.host.preferences.value(forKey: "thump.accelThreshold", default: 0.035))
+        ThumpWaveformView(values: detector.waveformHistory, threshold: detector.currentEffectiveThreshold)
             .frame(height: 50)
     }
 }

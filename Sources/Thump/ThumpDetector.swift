@@ -127,22 +127,32 @@ public final class ThumpDetector: ObservableObject {
             .store(in: &cancellables)
     }
     
+    public var currentEffectiveThreshold: Double {
+        config.lock.lock()
+        defer { config.lock.unlock() }
+        return config.overrideThreshold ?? config.threshold
+    }
+
     private func updateCache() {
         let rawProfile = host.preferences.value(forKey: "thump.surfaceProfile", default: "dynamic")
         let profile = ThumpSurfaceProfile.from(raw: rawProfile)
 
         let userThreshold = host.preferences.value(forKey: "thump.accelThreshold", default: profile.defaultThreshold)
-        let t = (userThreshold > 0 && userThreshold <= 0.10) ? userThreshold : profile.defaultThreshold
-        
+        let baseThreshold = (userThreshold > 0 && userThreshold <= 0.10) ? userThreshold : profile.defaultThreshold
+
+        let sensitivity = host.preferences.value(forKey: "thump.sensitivityMultiplier", default: 1.0)
+        let clampedSensitivity = min(max(sensitivity, 0.50), 1.50)
+        let effectiveThreshold = baseThreshold * (1.0 / clampedSensitivity)
+
         let userWindow = host.preferences.value(forKey: "thump.groupingWindow", default: profile.defaultGroupingWindow)
         let w = (userWindow >= 0.50 && userWindow <= 1.2) ? userWindow : profile.defaultGroupingWindow
-        
+
         let userCooldown = host.preferences.value(forKey: "thump.cooldown", default: profile.defaultCooldown)
         let c = (userCooldown >= 0.04 && userCooldown <= 0.10) ? userCooldown : profile.defaultCooldown
-        
+
         config.lock.lock()
         config.surfaceProfile = profile
-        config.threshold = t
+        config.threshold = effectiveThreshold
         config.groupingWindow = w
         config.cooldown = c
         config.lock.unlock()

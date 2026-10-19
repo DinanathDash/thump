@@ -13,6 +13,8 @@ public final class ThumpKnockDetector {
     // MARK: - State Tracking
 
     private var baselineGravity = SIMD3<Double>(0, 0, 0)
+    private var referenceGravity = SIMD3<Double>(0, 0, 0)
+    private var referenceGravityTimestamp: TimeInterval = 0.0
     private var previousAcceleration = SIMD3<Double>(0, 0, 0)
     private var isInitialized = false
 
@@ -28,6 +30,9 @@ public final class ThumpKnockDetector {
     private var macroscopicMotionLockoutUntil: TimeInterval = 0.0
     private var lastLoggedPeakTime: TimeInterval = 0.0
 
+    /// Tracks duration of elevated transient energy to distinguish short impulses from sustained movement.
+    private var consecutiveElevatedSamples: Int = 0
+
     /// Rolling window of recent jerk samples to estimate body tremor / micro-sway on lap.
     private var rollingJerkSway: [Double] = []
     private var detectedSurfaceState: String = "DESK"
@@ -40,6 +45,8 @@ public final class ThumpKnockDetector {
     /// Resets all internal filters and tap history.
     public func reset() {
         baselineGravity = SIMD3<Double>(0, 0, 0)
+        referenceGravity = SIMD3<Double>(0, 0, 0)
+        referenceGravityTimestamp = 0.0
         previousAcceleration = SIMD3<Double>(0, 0, 0)
         isInitialized = false
         ambientNoiseEnvelope = 0.01
@@ -48,6 +55,7 @@ public final class ThumpKnockDetector {
         previousSampleTime = 0.0
         macroscopicMotionLockoutUntil = 0.0
         lastLoggedPeakTime = 0.0
+        consecutiveElevatedSamples = 0
         rollingJerkSway.removeAll()
         detectedSurfaceState = "DESK"
         lastSurfaceLogTime = 0.0
@@ -67,6 +75,8 @@ public final class ThumpKnockDetector {
     ) -> Int? {
         if !isInitialized {
             baselineGravity = sample
+            referenceGravity = sample
+            referenceGravityTimestamp = now
             previousAcceleration = sample
             previousSampleTime = now
             isInitialized = true
@@ -127,29 +137,88 @@ public final class ThumpKnockDetector {
         // Emit visualization sample (scaled for UI responsiveness)
         onWaveformSample?(min(max(transientEnergy * 18.0, 0.0), 1.2))
 
+        // Angular rotation velocity of baseline gravity vector (detects lifting, carrying, tilting the laptop).
+        // Evaluated over a 160ms window to distinguish macroscopic tilting from sample micro-jitter and tap vibrations.
+        var isTiltingFast = false
+        if referenceGravityTimestamp <= 0.0 {
+            referenceGravity = baselineGravity
+            referenceGravityTimestamp = now
+        } else {
+            let elapsed = now - referenceGravityTimestamp
+            if elapsed >= 0.16 {
+                let currentGravityLength = simd_length(baselineGravity)
+                let refGravityLength = simd_length(referenceGravity)
+                if currentGravityLength > 0.5 && refGravityLength > 0.5 {
+                    let currentDir = baselineGravity / currentGravityLength
+                    let refDir = referenceGravity / refGravityLength
+                    let dotProd = min(max(simd_dot(currentDir, refDir), -1.0), 1.0)
+                    let angleRad = acos(dotProd)
+                    let angleDeg = angleRad * 180.0 / .pi
+                    let angularSpeedDegPerSec = angleDeg / elapsed
+                    // Macroscopic rotation (e.g. lifting laptop, adjusting screen) rotates chassis > 22 deg/sec sustained
+                    if angleDeg > 4.0 && angularSpeedDegPerSec > 22.0 {
+                        isTiltingFast = true
+                        macroscopicMotionLockoutUntil = max(macroscopicMotionLockoutUntil, now + 0.25)
+                        if !recordedTapTimestamps.isEmpty {
+                            recordedTapTimestamps.removeAll()
+                        }
+                    }
+                }
+                referenceGravity = baselineGravity
+                referenceGravityTimestamp = now
+            }
+        }
+
+        // Track continuous duration of elevated energy (taps are short impulses 10-25ms; handling/sliding is continuous > 45ms)
+        if transientEnergy >= 0.012 {
+            consecutiveElevatedSamples += 1
+        } else {
+            consecutiveElevatedSamples = 0
+        }
+        // At 800Hz, 36 samples ~ 45ms. Real chassis knocks ring down in < 30ms (<= 25 samples).
+        let isSustainedMotion = consecutiveElevatedSamples >= 36
+        if isSustainedMotion {
+            macroscopicMotionLockoutUntil = max(macroscopicMotionLockoutUntil, now + 0.25)
+            if consecutiveElevatedSamples >= 50 && !recordedTapTimestamps.isEmpty {
+                recordedTapTimestamps.removeAll()
+            }
+        }
+
         // 4. Sequence state tracking
         let isSequenceActive = !recordedTapTimestamps.isEmpty && (now - (recordedTapTimestamps.last ?? 0) <= max(0.70, groupingWindow))
 
         // 5. Active typing suppression
-        // When typing on the keyboard, keycaps vibrate the chassis at 0.015-0.025.
-        // CGEventSource checks system-wide keyboard activity without requiring permissions.
-        var isTyping = false
+        // Keypresses, spacebar strikes, and palm shifts during typing generate mechanical chassis vibrations.
+        // CGEventSource checks system-wide keyboard and modifier activity without requiring special permissions.
+        var isTypingActive = false
         #if os(macOS)
-        let secondsSinceKey = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .keyDown)
-        if secondsSinceKey >= 0.0 && secondsSinceKey < 0.28 {
-            isTyping = true
+        let sKey1 = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .keyDown)
+        let sKey2 = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .keyDown)
+        let sFlags = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .flagsChanged)
+        let validKeyTimes = [sKey1, sKey2, sFlags].filter { $0 >= 0.0 }
+        if let minKeyTime = validKeyTimes.min(), minKeyTime < 0.38 {
+            isTypingActive = true
+            macroscopicMotionLockoutUntil = max(macroscopicMotionLockoutUntil, now + 0.15)
+            // Immediately purge any in-progress tap sequence so typing cannot form or trigger an action
+            if !recordedTapTimestamps.isEmpty {
+                recordedTapTimestamps.removeAll()
+            }
         }
         #endif
 
         // 6. Macroscopic handling detection (e.g. lifting, adjusting display lid, carrying laptop)
-        // Only active when idle (not during an active sequence or immediately following a tap).
         let dynamicHighPassMagnitude = simd_length(dynamicHighPass)
         let totalGOffset = abs(simd_length(sample) - 1.0)
-        let isRingDown = (now - lastRegisteredTapTime < 0.25)
-        if !isSequenceActive && !isRingDown {
-            let isLargeMotion = (dynamicHighPassMagnitude > 0.45 && jerkMagnitude < 0.020) || (totalGOffset > 0.40 && jerkMagnitude < 0.020)
-            if isLargeMotion {
-                macroscopicMotionLockoutUntil = max(macroscopicMotionLockoutUntil, now + 0.20)
+        let isRingDown = (now - lastRegisteredTapTime < 0.20)
+        if !isRingDown {
+            // Firm taps can briefly spike high-pass to 0.09-0.12G for 1-2 samples.
+            // Macroscopic handling produces sustained high acceleration (>0.18G) or sustained G departure (>0.15G with elevated samples).
+            let isGrossMotion = (dynamicHighPassMagnitude > 0.18) || (totalGOffset > 0.15 && consecutiveElevatedSamples > 8)
+            if isGrossMotion {
+                macroscopicMotionLockoutUntil = max(macroscopicMotionLockoutUntil, now + 0.25)
+                if !recordedTapTimestamps.isEmpty {
+                    recordedTapTimestamps.removeAll()
+                }
             }
         }
 
@@ -159,28 +228,28 @@ public final class ThumpKnockDetector {
         }
 
         // Surface-adapted baseline threshold:
-        // On a lap, clothing/legs absorb shock, so threshold is scaled down to 0.016.
+        // Clamped so high stale calibration values don't create an unreachable threshold.
         let baseEffectiveThreshold: Double
         if isLapCondition {
-            baseEffectiveThreshold = max(0.015, min(threshold * 0.78, 0.018))
+            baseEffectiveThreshold = max(0.015, min(threshold * 0.78, 0.019))
         } else {
-            baseEffectiveThreshold = max(0.020, threshold)
+            baseEffectiveThreshold = max(0.020, min(threshold, 0.025))
         }
         let adaptiveThreshold = max(baseEffectiveThreshold, (ambientNoiseEnvelope * 1.8) + 0.003)
 
         // 8. Impulse verification (continuation taps in an active sequence use a refined gate)
         let currentCooldown = isSequenceActive ? max(0.045, min(cooldown, 0.060)) : (isLapCondition ? max(0.048, min(cooldown, 0.060)) : cooldown)
         let isRefractoryCleared = now - lastRegisteredTapTime >= currentCooldown
-        let isMotionCleared = (isSequenceActive || now >= macroscopicMotionLockoutUntil) && !isTyping
+        let isMotionCleared = (now >= macroscopicMotionLockoutUntil) && !isTypingActive && !isSustainedMotion && !isTiltingFast
 
         let requiredThreshold = isSequenceActive ? max(isLapCondition ? 0.015 : 0.018, baseEffectiveThreshold * 0.80) : adaptiveThreshold
-        let requiredJerk = isSequenceActive ? (isLapCondition ? 0.011 : 0.013) : (isLapCondition ? 0.012 : 0.014)
+        let requiredJerk = isSequenceActive ? (isLapCondition ? 0.0100 : 0.0105) : (isLapCondition ? 0.0110 : 0.0118)
 
         let exceedsThreshold = transientEnergy > requiredThreshold
         let isTransientSpike = jerkMagnitude > requiredJerk
 
         // Diagnostic logging whenever a noticeable impulse/vibration occurs
-        if (transientEnergy >= 0.012 || jerkMagnitude >= 0.012), (now - lastLoggedPeakTime > 0.040) {
+        if (transientEnergy >= 0.012 || jerkMagnitude >= 0.011), (now - lastLoggedPeakTime > 0.040) {
             lastLoggedPeakTime = now
             let passed = exceedsThreshold && isRefractoryCleared && isMotionCleared && isTransientSpike
             var reasons: [String] = []
@@ -188,7 +257,9 @@ public final class ThumpKnockDetector {
             if !isTransientSpike { reasons.append(String(format: "jerk %.4f <= req %.4f", jerkMagnitude, requiredJerk)) }
             if !isRefractoryCleared { reasons.append(String(format: "cooldown (%.0fms < %.0fms)", (now - lastRegisteredTapTime) * 1000, currentCooldown * 1000)) }
             if now < macroscopicMotionLockoutUntil { reasons.append("motion locked") }
-            if isTyping { reasons.append("typing active") }
+            if isSustainedMotion { reasons.append(String(format: "sustained (%d frames)", consecutiveElevatedSamples)) }
+            if isTiltingFast { reasons.append("tilt rate high") }
+            if isTypingActive { reasons.append("typing active") }
 
             let resultStr = passed ? "ACCEPTED" : "REJECTED [\(reasons.joined(separator: ", "))]"
             ThumpLogger.log(String(format: "[IMPULSE] [%@] Peak: energy=%.4f (req=%.4f), jerk=%.4f (req=%.4f), G=%.2f -> %@",
