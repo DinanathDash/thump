@@ -7,12 +7,16 @@ struct ThumpSettingsPane: View {
     @ObservedObject var droplet: ThumpDroplet
     let context: SettingsPaneContext
     
+    @Environment(\.dropletSettingsPageOpener) private var opener
     @State private var showingWizard = false
     @State private var redrawCounter = 0
     @State private var isExportingLogs = false
     var body: some View {
+        let _ = redrawCounter
         DropletSettingsPane {
             let available = ThumpAccelerometerService().available()
+            let hasCalibrated = droplet.host?.preferences.value(forKey: "thump.hasCalibrated", default: false) ?? false
+
             DropletSettingsSection(header: { Text("Calibration") }) {
                 DropletSettingsCard {
                     if available {
@@ -43,25 +47,70 @@ struct ThumpSettingsPane: View {
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                             
-                            if let detector = droplet.detector {
-                                LiveSensorView(detector: detector)
-                            } else {
-                                Text("Sensor inactive")
+                            ZStack {
+                                VStack(alignment: .leading, spacing: DroppySpacing.sm) {
+                                    if let detector = droplet.detector {
+                                        LiveSensorView(detector: detector)
+                                    } else {
+                                        Text("Sensor inactive")
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    
+                                    let rawProfile = droplet.host?.preferences.value(forKey: "thump.surfaceProfile", default: ThumpSurfaceProfile.dynamic.rawValue) ?? ThumpSurfaceProfile.dynamic.rawValue
+                                    let activeProfile = ThumpSurfaceProfile.from(raw: rawProfile)
+                                    let accelThreshold = droplet.host?.preferences.value(forKey: "thump.accelThreshold", default: activeProfile.defaultThreshold) ?? activeProfile.defaultThreshold
+                                    let groupingWindow = droplet.host?.preferences.value(forKey: "thump.groupingWindow", default: activeProfile.defaultGroupingWindow) ?? activeProfile.defaultGroupingWindow
+                                    let cooldown = droplet.host?.preferences.value(forKey: "thump.cooldown", default: activeProfile.defaultCooldown) ?? activeProfile.defaultCooldown
+                                    
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Profile: \(activeProfile.displayName)")
+                                        Text("Threshold: \(String(format: "%.3f", accelThreshold))")
+                                        Text("Window: \(String(format: "%.2f s", groupingWindow))")
+                                        Text("Cooldown: \(String(format: "%.2f s", cooldown))")
+                                    }
+                                    .font(.footnote)
                                     .foregroundStyle(.secondary)
+                                    .padding(.top, DroppySpacing.sm)
+                                }
+                                .blur(radius: hasCalibrated ? 0 : 8)
+                                .allowsHitTesting(hasCalibrated)
+
+                                if !hasCalibrated {
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .fill(.ultraThinMaterial)
+                                            .opacity(0.88)
+
+                                        VStack(spacing: 8) {
+                                            Image(systemName: "slider.horizontal.3")
+                                                .font(.system(size: 20, weight: .medium))
+                                                .foregroundStyle(.secondary)
+
+                                            Text("Calibration Required")
+                                                .font(.subheadline.weight(.semibold))
+
+                                            Text("Calibrate sensor to detect taps accurately on this Mac.")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .multilineTextAlignment(.center)
+                                                .padding(.horizontal, 20)
+
+                                            Button("Start Calibration Wizard") {
+                                                if let opener = opener {
+                                                    opener(page: "calibration", title: "Calibration")
+                                                } else {
+                                                    showingWizard = true
+                                                }
+                                            }
+                                            .buttonStyle(.borderedProminent)
+                                            .controlSize(.regular)
+                                            .padding(.top, 2)
+                                        }
+                                        .padding(.vertical, 14)
+                                        .padding(.horizontal, 12)
+                                    }
+                                }
                             }
-                            
-                            let accelThreshold = droplet.host?.preferences.value(forKey: "thump.accelThreshold", default: 0.030) ?? 0.030
-                            let groupingWindow = droplet.host?.preferences.value(forKey: "thump.groupingWindow", default: 0.65) ?? 0.65
-                            let cooldown = droplet.host?.preferences.value(forKey: "thump.cooldown", default: 0.070) ?? 0.070
-                            
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Threshold: \(String(format: "%.3f", accelThreshold))")
-                                Text("Window: \(String(format: "%.2f s", groupingWindow))")
-                                Text("Cooldown: \(String(format: "%.2f s", cooldown))")
-                            }
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .padding(.top, DroppySpacing.sm)
                         }
                     } else if available {
                         HStack(spacing: 8) {
@@ -77,11 +126,54 @@ struct ThumpSettingsPane: View {
                 }
             }
             
-            if droplet.isListening {
-                DropletSettingsSection(header: { Text("Calibration Wizard") }) {
+            if available && droplet.isListening {
+                DropletSettingsSection(header: { Text("Operating surface") }) {
                     DropletSettingsCard {
-                        DropletSettingsPageLink("Run calibration wizard", subtitle: "Automatically detect the best settings for you.", page: "calibration") {
-                            ThumpWizardIcon()
+                        let rawProfile = droplet.host?.preferences.value(forKey: "thump.surfaceProfile", default: ThumpSurfaceProfile.dynamic.rawValue) ?? ThumpSurfaceProfile.dynamic.rawValue
+                        let currentProfile = ThumpSurfaceProfile.from(raw: rawProfile)
+
+                        DropletControlRow(
+                            title: "Surface profile",
+                            infoTip: currentProfile.summaryDescription
+                        ) {
+                            Picker("Surface profile", selection: Binding(
+                                get: {
+                                    let _ = redrawCounter
+                                    return droplet.host?.preferences.value(forKey: "thump.surfaceProfile", default: ThumpSurfaceProfile.dynamic.rawValue) ?? ThumpSurfaceProfile.dynamic.rawValue
+                                },
+                                set: { newRaw in
+                                    droplet.host?.preferences.setValue(newRaw, forKey: "thump.surfaceProfile")
+                                    let newProfile = ThumpSurfaceProfile.from(raw: newRaw)
+                                    let hasCal = droplet.host?.preferences.value(forKey: "thump.hasCalibrated", default: false) ?? false
+                                    if !hasCal {
+                                        droplet.host?.preferences.setValue(newProfile.defaultThreshold, forKey: "thump.accelThreshold")
+                                        droplet.host?.preferences.setValue(newProfile.defaultGroupingWindow, forKey: "thump.groupingWindow")
+                                        droplet.host?.preferences.setValue(newProfile.defaultCooldown, forKey: "thump.cooldown")
+                                    }
+                                    redrawCounter += 1
+                                }
+                            )) {
+                                ForEach(ThumpSurfaceProfile.allCases) { profile in
+                                    Label(profile.displayName, systemImage: profile.iconName).tag(profile.rawValue)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            .fixedSize()
+                        }
+                    }
+                }
+
+                if hasCalibrated {
+                    DropletSettingsSection(header: { Text("Calibration Wizard") }) {
+                        DropletSettingsCard {
+                            DropletSettingsPageLink(
+                                "Recalibrate tap sensor",
+                                subtitle: "Calibrated for this Mac. Tap to recalibrate force and rhythm.",
+                                page: "calibration"
+                            ) {
+                                ThumpWizardIcon()
+                            }
                         }
                     }
                 }
@@ -140,10 +232,22 @@ struct ThumpSettingsPane: View {
             }
         }
         .onAppear {
+            redrawCounter += 1
             droplet.detector?.beginVisualization()
         }
         .onDisappear {
             droplet.detector?.endVisualization()
+        }
+        .sheet(isPresented: $showingWizard) {
+            if let detector = droplet.detector {
+                ThumpCalibrationWizard(detector: detector)
+            }
+        }
+        .onChange(of: showingWizard) {
+            redrawCounter += 1
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            redrawCounter += 1
         }
     }
 
@@ -208,7 +312,7 @@ struct ActionConfigRow: View {
                 }
             )) {
                 ForEach(ThumpActionType.allCases) { type in
-                    Text(type.rawValue).tag(type.rawValue)
+                    Label(type.rawValue, systemImage: type.iconName).tag(type.rawValue)
                 }
             }
         }
@@ -216,7 +320,7 @@ struct ActionConfigRow: View {
         let rawActionType = host.preferences.value(forKey: "thump.actionType.\(taps)", default: ThumpActionType.none.rawValue)
         let actionType = ThumpActionType(rawValue: rawActionType)?.rawValue ?? ThumpActionType.none.rawValue
         if actionType == ThumpActionType.appleScript.rawValue || actionType == ThumpActionType.shellCommand.rawValue {
-            DropletControlRow(title: "Command / script") {
+            DropletControlRow(title: "Command / script", icon: actionType == ThumpActionType.appleScript.rawValue ? "applescript" : "terminal") {
                 TextField("", text: Binding(
                     get: { host.preferences.value(forKey: "thump.actionPayload.\(taps)", default: "") },
                     set: { host.preferences.setValue($0, forKey: "thump.actionPayload.\(taps)") }
@@ -225,7 +329,7 @@ struct ActionConfigRow: View {
                     .lineLimit(1...5)
             }
         } else if actionType == ThumpActionType.runShortcut.rawValue {
-            DropletControlRow(title: "Shortcut name") {
+            DropletControlRow(title: "Shortcut name", icon: "square.2.layers.3d") {
                 TextField("", text: Binding(
                     get: { host.preferences.value(forKey: "thump.actionPayload.\(taps)", default: "") },
                     set: { host.preferences.setValue($0, forKey: "thump.actionPayload.\(taps)") }
@@ -233,7 +337,7 @@ struct ActionConfigRow: View {
                     .textFieldStyle(.roundedBorder)
             }
         } else if actionType == ThumpActionType.launchApp.rawValue {
-            DropletControlRow(title: "App name") {
+            DropletControlRow(title: "App name", icon: "arrow.up.forward.app") {
                 TextField("", text: Binding(
                     get: { host.preferences.value(forKey: "thump.actionPayload.\(taps)", default: "") },
                     set: { host.preferences.setValue($0, forKey: "thump.actionPayload.\(taps)") }

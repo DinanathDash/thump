@@ -19,6 +19,39 @@ public enum ThumpActionType: String, CaseIterable, Identifiable {
     case brightnessDown = "Brightness down"
     
     public var id: String { rawValue }
+
+    public var iconName: String {
+        switch self {
+        case .none:
+            return "slash.circle"
+        case .launchApp:
+            return "arrow.up.forward.app"
+        case .runShortcut:
+            return "square.3.layers.3d.bottom.filled"
+        case .appleScript:
+            return "applescript"
+        case .shellCommand:
+            return "terminal"
+        case .lockScreen:
+            return "lock"
+        case .toggleMenuBar:
+            return "menubar.rectangle"
+        case .screenshot:
+            return "camera.viewfinder"
+        case .playPause:
+            return "playpause"
+        case .volumeUp:
+            return "speaker.wave.3"
+        case .volumeDown:
+            return "speaker.wave.1"
+        case .muteUnmute:
+            return "speaker.slash"
+        case .brightnessUp:
+            return "sun.max"
+        case .brightnessDown:
+            return "sun.min"
+        }
+    }
 }
 
 @MainActor
@@ -93,7 +126,7 @@ public final class ThumpActionRunner {
         let newHideDesktop = shouldHideEverywhere
         let newVisibleFS = !shouldHideEverywhere
         
-        ThumpLogger.log("Toggling menu bar: currently (desktopHide=\(currentHide), fsVisible=\(currentFS)) -> new (desktopHide=\(newHideDesktop), fsVisible=\(newVisibleFS)) [Mode: \(shouldHideEverywhere ? "Always" : "Never")]")
+        ThumpLogger.log("[ACTION] Toggling menu bar: currently (desktopHide=\(currentHide), fsVisible=\(currentFS)) -> new (desktopHide=\(newHideDesktop), fsVisible=\(newVisibleFS)) [Mode: \(shouldHideEverywhere ? "Always" : "Never")]")
         
         CFPreferencesSetValue("_HIHideMenuBar" as CFString, newHideDesktop as CFPropertyList, globalDomain, user, host)
         CFPreferencesSetValue("AppleMenuBarVisibleInFullscreen" as CFString, newVisibleFS as CFPropertyList, globalDomain, user, host)

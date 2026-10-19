@@ -78,10 +78,15 @@ public final class ThumpLogger: @unchecked Sendable {
             guard let data = line.data(using: .utf8) else { return }
             self.write(data)
 
-            // Also mirror to /tmp/thump.log for quick CLI inspection
+            // Mirror to /tmp/thump.log capped at 1 MB for quick terminal inspection
             let tmpURL = URL(fileURLWithPath: "/tmp/thump.log")
-            if FileManager.default.fileExists(atPath: tmpURL.path) {
-                if let handle = try? FileHandle(forWritingTo: tmpURL) {
+            let fm = FileManager.default
+            if fm.fileExists(atPath: tmpURL.path) {
+                let tmpSize = ((try? fm.attributesOfItem(atPath: tmpURL.path)[.size]) as? UInt64) ?? 0
+                if tmpSize > 1024 * 1024 {
+                    try? fm.removeItem(at: tmpURL)
+                    try? data.write(to: tmpURL)
+                } else if let handle = try? FileHandle(forWritingTo: tmpURL) {
                     handle.seekToEndOfFile()
                     handle.write(data)
                     try? handle.close()
@@ -115,6 +120,8 @@ public final class ThumpLogger: @unchecked Sendable {
             try? fileManager.createDirectory(at: logDirectory, withIntermediateDirectories: true)
         }
 
+        purgeOldLogs()
+
         let fileURL = currentFileURL
         if !fileManager.fileExists(atPath: fileURL.path) {
             fileManager.createFile(atPath: fileURL.path, contents: nil, attributes: [.posixPermissions: 0o600])
@@ -125,10 +132,40 @@ public final class ThumpLogger: @unchecked Sendable {
             handle.seekToEndOfFile()
             self.fileHandle = handle
             let attributes = try fileManager.attributesOfItem(atPath: fileURL.path)
-            self.currentFileSize = attributes[.size] as? UInt64 ?? 0
+            self.currentFileSize = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
         } catch {
             self.fileHandle = nil
             self.currentFileSize = 0
+        }
+    }
+
+    /// Automatically purges log backups older than 7 days and stale export zips older than 24 hours.
+    private func purgeOldLogs(olderThanDays days: Int = 7) {
+        let fileManager = FileManager.default
+        let cutoffDate = Date(timeIntervalSinceNow: -Double(days * 24 * 3600))
+        
+        // 1. Purge rotated logs in ~/Library/Logs/Thump/ older than 7 days
+        if let files = try? fileManager.contentsOfDirectory(at: logDirectory, includingPropertiesForKeys: [.contentModificationDateKey]) {
+            for file in files where file.lastPathComponent.hasPrefix("thump") && file.lastPathComponent.contains(".log") {
+                if let attrs = try? fileManager.attributesOfItem(atPath: file.path),
+                   let modDate = attrs[.modificationDate] as? Date,
+                   modDate < cutoffDate {
+                    try? fileManager.removeItem(at: file)
+                }
+            }
+        }
+        
+        // 2. Clean up any stale export archives in NSTemporaryDirectory older than 24 hours
+        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
+        if let tempFiles = try? fileManager.contentsOfDirectory(at: tempDir, includingPropertiesForKeys: [.contentModificationDateKey]) {
+            let tempCutoff = Date(timeIntervalSinceNow: -86400)
+            for file in tempFiles where file.lastPathComponent.hasPrefix("Thump-Logs-") && file.lastPathComponent.hasSuffix(".zip") {
+                if let attrs = try? fileManager.attributesOfItem(atPath: file.path),
+                   let modDate = attrs[.modificationDate] as? Date,
+                   modDate < tempCutoff {
+                    try? fileManager.removeItem(at: file)
+                }
+            }
         }
     }
 

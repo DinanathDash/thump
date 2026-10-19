@@ -28,6 +28,11 @@ public final class ThumpKnockDetector {
     private var macroscopicMotionLockoutUntil: TimeInterval = 0.0
     private var lastLoggedPeakTime: TimeInterval = 0.0
 
+    /// Rolling window of recent jerk samples to estimate body tremor / micro-sway on lap.
+    private var rollingJerkSway: [Double] = []
+    private var detectedSurfaceState: String = "DESK"
+    private var lastSurfaceLogTime: TimeInterval = 0.0
+
     // MARK: - Lifecycle
 
     public init() {}
@@ -43,6 +48,9 @@ public final class ThumpKnockDetector {
         previousSampleTime = 0.0
         macroscopicMotionLockoutUntil = 0.0
         lastLoggedPeakTime = 0.0
+        rollingJerkSway.removeAll()
+        detectedSurfaceState = "DESK"
+        lastSurfaceLogTime = 0.0
     }
 
     // MARK: - Real-Time Processing
@@ -54,7 +62,8 @@ public final class ThumpKnockDetector {
         threshold: Double,
         groupingWindow: Double,
         cooldown: Double,
-        now: TimeInterval
+        now: TimeInterval,
+        surfaceProfile: ThumpSurfaceProfile = .dynamic
     ) -> Int? {
         if !isInitialized {
             baselineGravity = sample
@@ -76,10 +85,42 @@ public final class ThumpKnockDetector {
         let jerkMagnitude = simd_length(delta)
         let dynamicMagnitude = simd_length(dynamicHighPass)
 
+        // Rolling sway / tremor variance tracking (sliding window of 80 samples ~0.8s)
+        rollingJerkSway.append(jerkMagnitude)
+        if rollingJerkSway.count > 80 {
+            rollingJerkSway.removeFirst()
+        }
+        let avgSway = rollingJerkSway.reduce(0, +) / Double(max(rollingJerkSway.count, 1))
+
+        // Chassis pitch incline (degrees): negative values indicate backward tilt toward user
+        let pitchRadians = atan2(-baselineGravity.y, sqrt(baselineGravity.x * baselineGravity.x + baselineGravity.z * baselineGravity.z))
+        let pitchDegrees = pitchRadians * 180.0 / .pi
+
+        // Evaluate whether active conditions match a lap (soft / cushioned / tilted)
+        let isLapCondition: Bool
+        switch surfaceProfile {
+        case .lap:
+            isLapCondition = true
+        case .desk:
+            isLapCondition = false
+        case .dynamic:
+            // Dynamic auto-adaptation based on real empirical MacBook measurements:
+            // On Desk: pitch is -0.9° to +1.2°.
+            // On Lap: pitch is -3.5° to -8.2° (backward incline) and micro-sway is elevated.
+            isLapCondition = (pitchDegrees <= -3.5) || (avgSway > 0.0028)
+        }
+
+        let newSurfaceLabel = isLapCondition ? "LAP" : "DESK"
+        if newSurfaceLabel != detectedSurfaceState && (now - lastSurfaceLogTime > 2.0) {
+            detectedSurfaceState = newSurfaceLabel
+            lastSurfaceLogTime = now
+            ThumpLogger.log(String(format: "[SURFACE] Condition adapted to: %@ (pitch=%.1f deg, sway=%.5f, profile=%@)",
+                                  newSurfaceLabel, pitchDegrees, avgSway, surfaceProfile.rawValue))
+        }
+
         // 3. Transient tap energy metric
-        // A genuine chassis tap is dominated by high-frequency jerk.
-        // Dynamic displacement without high jerk represents macroscopic movement/wobble.
-        let transientEnergy = jerkMagnitude >= 0.018 
+        // Gated at 0.012 to capture both left and right palm-rest taps equally.
+        let transientEnergy = jerkMagnitude >= 0.012 
             ? max(jerkMagnitude * 1.05, min(dynamicMagnitude, 0.065))
             : (jerkMagnitude * 0.4)
 
@@ -100,16 +141,15 @@ public final class ThumpKnockDetector {
         }
         #endif
 
-        // 6. Macroscopic handling detection (e.g. lifting, adjusting display lid, bumping/carrying laptop)
+        // 6. Macroscopic handling detection (e.g. lifting, adjusting display lid, carrying laptop)
+        // Only active when idle (not during an active sequence or immediately following a tap).
         let dynamicHighPassMagnitude = simd_length(dynamicHighPass)
         let totalGOffset = abs(simd_length(sample) - 1.0)
-        let isMacroscopicMotion = (dynamicHighPassMagnitude > 0.12 && jerkMagnitude < 0.024) || (totalGOffset > 0.20 && jerkMagnitude < 0.024)
-        if isMacroscopicMotion {
-            macroscopicMotionLockoutUntil = max(macroscopicMotionLockoutUntil, now + 0.25)
-            if !recordedTapTimestamps.isEmpty {
-                ThumpLogger.log(String(format: "[WARN] Macroscopic motion lockout (highPass=%.3f, GOffset=%.3f, jerk=%.3f). Wiping %d recorded tap(s).",
-                      dynamicHighPassMagnitude, totalGOffset, jerkMagnitude, recordedTapTimestamps.count))
-                recordedTapTimestamps.removeAll()
+        let isRingDown = (now - lastRegisteredTapTime < 0.25)
+        if !isSequenceActive && !isRingDown {
+            let isLargeMotion = (dynamicHighPassMagnitude > 0.45 && jerkMagnitude < 0.020) || (totalGOffset > 0.40 && jerkMagnitude < 0.020)
+            if isLargeMotion {
+                macroscopicMotionLockoutUntil = max(macroscopicMotionLockoutUntil, now + 0.20)
             }
         }
 
@@ -117,15 +157,24 @@ public final class ThumpKnockDetector {
         if !isSequenceActive && transientEnergy < threshold * 0.75 {
             ambientNoiseEnvelope = (ambientNoiseEnvelope * 0.98) + (transientEnergy * 0.02)
         }
-        let adaptiveThreshold = max(threshold, (ambientNoiseEnvelope * 2.0) + 0.005)
+
+        // Surface-adapted baseline threshold:
+        // On a lap, clothing/legs absorb shock, so threshold is scaled down to 0.016.
+        let baseEffectiveThreshold: Double
+        if isLapCondition {
+            baseEffectiveThreshold = max(0.015, min(threshold * 0.78, 0.018))
+        } else {
+            baseEffectiveThreshold = max(0.020, threshold)
+        }
+        let adaptiveThreshold = max(baseEffectiveThreshold, (ambientNoiseEnvelope * 1.8) + 0.003)
 
         // 8. Impulse verification (continuation taps in an active sequence use a refined gate)
-        let currentCooldown = isSequenceActive ? max(0.045, min(cooldown, 0.065)) : cooldown
+        let currentCooldown = isSequenceActive ? max(0.045, min(cooldown, 0.060)) : (isLapCondition ? max(0.048, min(cooldown, 0.060)) : cooldown)
         let isRefractoryCleared = now - lastRegisteredTapTime >= currentCooldown
-        let isMotionCleared = now >= macroscopicMotionLockoutUntil && !isTyping
+        let isMotionCleared = (isSequenceActive || now >= macroscopicMotionLockoutUntil) && !isTyping
 
-        let requiredThreshold = isSequenceActive ? max(0.026, threshold * 0.80) : adaptiveThreshold
-        let requiredJerk = isSequenceActive ? 0.020 : 0.024
+        let requiredThreshold = isSequenceActive ? max(isLapCondition ? 0.015 : 0.018, baseEffectiveThreshold * 0.80) : adaptiveThreshold
+        let requiredJerk = isSequenceActive ? (isLapCondition ? 0.011 : 0.013) : (isLapCondition ? 0.012 : 0.014)
 
         let exceedsThreshold = transientEnergy > requiredThreshold
         let isTransientSpike = jerkMagnitude > requiredJerk
@@ -142,17 +191,18 @@ public final class ThumpKnockDetector {
             if isTyping { reasons.append("typing active") }
 
             let resultStr = passed ? "ACCEPTED" : "REJECTED [\(reasons.joined(separator: ", "))]"
-            ThumpLogger.log(String(format: "[IMPULSE] Peak: energy=%.4f (req=%.4f), jerk=%.4f (req=%.4f), G=%.2f -> %@",
-                  transientEnergy, requiredThreshold, jerkMagnitude, requiredJerk, simd_length(sample), resultStr))
+            ThumpLogger.log(String(format: "[IMPULSE] [%@] Peak: energy=%.4f (req=%.4f), jerk=%.4f (req=%.4f), G=%.2f -> %@",
+                  detectedSurfaceState, transientEnergy, requiredThreshold, jerkMagnitude, requiredJerk, simd_length(sample), resultStr))
         }
 
         if exceedsThreshold && isRefractoryCleared && isMotionCleared && isTransientSpike {
             recordedTapTimestamps.append(now)
             lastRegisteredTapTime = now
             let delta = recordedTapTimestamps.count > 1 ? String(format: " (+%.0fms)", (now - (recordedTapTimestamps.dropLast().last ?? now)) * 1000) : ""
-            ThumpLogger.log(String(format: "[TAP] Tap #%d registered%@. Total in active sequence: %d",
-                  recordedTapTimestamps.count, delta, recordedTapTimestamps.count))
+            ThumpLogger.log(String(format: "[TAP] [%@] Tap #%d registered%@. Total in active sequence: %d",
+                  detectedSurfaceState, recordedTapTimestamps.count, delta, recordedTapTimestamps.count))
         }
+
 
         // 7. Check if sequence is complete
         var completedSequence: Int? = nil
@@ -161,15 +211,12 @@ public final class ThumpKnockDetector {
             let count = recordedTapTimestamps.count
 
             // If 4 taps (the maximum supported action) are reached, emit quickly after 0.22s silence.
-            // If 3 taps are reached, provide a comfortable cadence window (max(groupingWindow, 0.70))
-            // so the 4th tap is not prematurely cut off before the user finishes.
+            // For 2 or 3 taps, wait for the user-configured grouping window of silence.
             let timeout: Double
             if count >= 4 {
                 timeout = 0.22
-            } else if count == 3 {
-                timeout = max(groupingWindow, 0.70)
             } else {
-                timeout = max(groupingWindow, 0.55)
+                timeout = max(0.35, groupingWindow)
             }
 
             if silence >= timeout {

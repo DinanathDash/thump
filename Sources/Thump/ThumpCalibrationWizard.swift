@@ -63,7 +63,7 @@ private final class CalibrationCollector: ObservableObject {
         // Normalized transient energy from ThumpKnockDetector
         let unscaledMagnitude = magnitude / 18.0
 
-        guard unscaledMagnitude > 0.024, now - lastPeakTimestamp > debounceInterval else { return }
+        guard unscaledMagnitude > 0.012, now - lastPeakTimestamp > debounceInterval else { return }
         lastPeakTimestamp = now
         activePeaks.append(TapImpulse(peakMagnitude: unscaledMagnitude, timestamp: now))
     }
@@ -150,9 +150,9 @@ private final class CalibrationCollector: ObservableObject {
         let calculatedCooldown = minimumInterval * 0.40
 
         return (
-            threshold: max(0.025, min(calculatedThreshold, 0.080)),
+            threshold: max(0.015, min(calculatedThreshold, 0.075)),
             groupingWindow: max(0.60, min(calculatedWindow, 0.85)),
-            cooldown: max(0.06, min(calculatedCooldown, 0.10))
+            cooldown: max(0.055, min(calculatedCooldown, 0.090))
         )
     }
 }
@@ -175,21 +175,21 @@ public struct ThumpCalibrationWizard: View {
                     if step == 1 {
                         calibrationStepView(
                             title: "Double taps",
-                            subtitle: "Tap twice quickly on the palm rest area.\nRepeat 3 times to measure force and speed.",
+                            subtitle: "Tap twice quickly on the palm rest (left or right side).\nRepeat 3 times to measure force and speed.",
                             collected: collector.doubleTapTrials.count,
                             required: 3
                         )
                     } else if step == 2 {
                         calibrationStepView(
                             title: "Triple taps",
-                            subtitle: "Tap three times quickly.\nRepeat 3 times to refine timing.",
+                            subtitle: "Tap three times quickly on either palm rest.\nRepeat 3 times to refine cadence.",
                             collected: collector.tripleTapTrials.count,
                             required: 3
                         )
                     } else if step == 3 {
                         calibrationStepView(
                             title: "Quad taps",
-                            subtitle: "Tap four times quickly.\nRepeat 3 times to finalize cadence.",
+                            subtitle: "Tap four times quickly on either palm rest.\nRepeat 3 times to finalize profile.",
                             collected: collector.quadTapTrials.count,
                             required: 3
                         )
@@ -244,7 +244,7 @@ public struct ThumpCalibrationWizard: View {
         }
         .onAppear {
             detector.isSuppressingActions = true
-            detector.overrideThreshold = 0.025
+            detector.overrideThreshold = 0.015
             detector.beginVisualization()
 
             collector.onStepCompleted = { completedPhase in
@@ -368,6 +368,7 @@ public struct ThumpCalibrationWizard: View {
         detector.host.preferences.setValue(computed.threshold, forKey: "thump.accelThreshold")
         detector.host.preferences.setValue(computed.groupingWindow, forKey: "thump.groupingWindow")
         detector.host.preferences.setValue(computed.cooldown, forKey: "thump.cooldown")
+        detector.host.preferences.setValue(true, forKey: "thump.hasCalibrated")
     }
 }
 

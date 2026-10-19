@@ -3,6 +3,7 @@ import Combine
 import DroppyKit
 import IOKit
 import IOKit.hid
+import AppKit
 
 @MainActor
 public final class ThumpDetector: ObservableObject {
@@ -31,9 +32,11 @@ public final class ThumpDetector: ObservableObject {
         var threshold: Double = 0.030
         var groupingWindow: Double = 0.65
         var cooldown: Double = 0.070
+        var surfaceProfile: ThumpSurfaceProfile = .dynamic
         var overrideThreshold: Double? = nil
         var isVisualizationActive: Bool = false
         var visualizationCount: Int = 0
+        var isAppActive: Bool = true
         var lastPublish: TimeInterval = 0
         var pendingSamples: [Double] = []
     }
@@ -48,18 +51,48 @@ public final class ThumpDetector: ObservableObject {
         config.lock.lock(); defer { config.lock.unlock() }; return config.isVisualizationActive
     }
     
+    private func updateVisualizationState() {
+        config.lock.lock()
+        let previous = config.isVisualizationActive
+        config.isVisualizationActive = (config.visualizationCount > 0) && config.isAppActive
+        let current = config.isVisualizationActive
+        if !current {
+            config.pendingSamples.removeAll(keepingCapacity: false)
+        }
+        config.lock.unlock()
+        
+        if previous != current {
+            if current {
+                ThumpLogger.log("[SENSOR] Live waveform visualization activated (app active & UI visible).")
+            } else {
+                ThumpLogger.log("[SENSOR] Live waveform visualization paused (app in background or UI closed).")
+                DispatchQueue.main.async { [weak self] in
+                    self?.waveformHistory = Array(repeating: 0.0, count: 120)
+                    self?.waveformData = 0.0
+                }
+            }
+        }
+    }
+    
     public func beginVisualization() {
         config.lock.lock()
         config.visualizationCount += 1
-        config.isVisualizationActive = config.visualizationCount > 0
         config.lock.unlock()
+        updateVisualizationState()
     }
     
     public func endVisualization() {
         config.lock.lock()
         config.visualizationCount = max(0, config.visualizationCount - 1)
-        config.isVisualizationActive = config.visualizationCount > 0
         config.lock.unlock()
+        updateVisualizationState()
+    }
+
+    private func handleAppActiveState(isActive: Bool) {
+        config.lock.lock()
+        config.isAppActive = isActive
+        config.lock.unlock()
+        updateVisualizationState()
     }
     
     // Test mode overrides (for the Calibration Wizard)
@@ -70,25 +103,45 @@ public final class ThumpDetector: ObservableObject {
         self.host = host
         self.actionRunner = actionRunner
         
+        config.lock.lock()
+        config.isAppActive = NSApplication.shared.isActive
+        config.lock.unlock()
+
         updateCache()
         host.preferences.didChange
             .sink { [weak self] _ in
                 self?.updateCache()
             }
             .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in
+                self?.handleAppActiveState(isActive: true)
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)
+            .sink { [weak self] _ in
+                self?.handleAppActiveState(isActive: false)
+            }
+            .store(in: &cancellables)
     }
     
     private func updateCache() {
-        let userThreshold = host.preferences.value(forKey: "thump.accelThreshold", default: 0.030)
-        let t = (userThreshold > 0 && userThreshold <= 0.10) ? userThreshold : 0.030
+        let rawProfile = host.preferences.value(forKey: "thump.surfaceProfile", default: "dynamic")
+        let profile = ThumpSurfaceProfile.from(raw: rawProfile)
+
+        let userThreshold = host.preferences.value(forKey: "thump.accelThreshold", default: profile.defaultThreshold)
+        let t = (userThreshold > 0 && userThreshold <= 0.10) ? userThreshold : profile.defaultThreshold
         
-        let userWindow = host.preferences.value(forKey: "thump.groupingWindow", default: 0.65)
-        let w = (userWindow >= 0.55 && userWindow <= 1.2) ? userWindow : 0.65
+        let userWindow = host.preferences.value(forKey: "thump.groupingWindow", default: profile.defaultGroupingWindow)
+        let w = (userWindow >= 0.50 && userWindow <= 1.2) ? userWindow : profile.defaultGroupingWindow
         
-        let userCooldown = host.preferences.value(forKey: "thump.cooldown", default: 0.065)
-        let c = (userCooldown >= 0.04 && userCooldown <= 0.10) ? userCooldown : 0.065
+        let userCooldown = host.preferences.value(forKey: "thump.cooldown", default: profile.defaultCooldown)
+        let c = (userCooldown >= 0.04 && userCooldown <= 0.10) ? userCooldown : profile.defaultCooldown
         
         config.lock.lock()
+        config.surfaceProfile = profile
         config.threshold = t
         config.groupingWindow = w
         config.cooldown = c
@@ -149,39 +202,33 @@ public final class ThumpDetector: ObservableObject {
         
         let config = self.config
         knockDetector.onWaveformSample = { [weak self] sample in
-            config.lock.lock()
-            let isActive = config.isVisualizationActive
+            guard let self else { return }
             
+            self.config.lock.lock()
+            guard self.config.isVisualizationActive else {
+                self.config.lock.unlock()
+                return
+            }
+            
+            self.config.pendingSamples.append(sample)
+            let now = ProcessInfo.processInfo.systemUptime
             var samplesToPublish: [Double]? = nil
-            if isActive {
-                config.pendingSamples.append(sample)
-                let now = ProcessInfo.processInfo.systemUptime
-                if now - config.lastPublish > 0.016 {
-                    samplesToPublish = config.pendingSamples
-                    config.pendingSamples.removeAll(keepingCapacity: true)
-                    config.lastPublish = now
-                }
-            } else {
-                config.pendingSamples.removeAll(keepingCapacity: false)
+            if now - self.config.lastPublish > 0.016 { // Downsample to ~60 FPS
+                samplesToPublish = self.config.pendingSamples
+                self.config.pendingSamples.removeAll(keepingCapacity: true)
+                self.config.lastPublish = now
             }
-            
-            config.lock.unlock()
-            
-            DispatchQueue.main.async {
-                self?.onRawWaveformSample?(sample)
-            }
+            self.config.lock.unlock()
             
             if let newSamples = samplesToPublish, !newSamples.isEmpty {
-                // Max-pool downsampling: preserve the highest peak but only append 1 point per frame
-                // This locks the graph speed to exactly the UI frame rate (60 FPS) and prevents it from zooming by.
                 let maxSample = newSamples.max() ?? 0.0
                 DispatchQueue.main.async {
-                    guard let self = self else { return }
                     self.waveformData = maxSample
                     self.waveformHistory.append(maxSample)
                     if self.waveformHistory.count > 120 {
                         self.waveformHistory.removeFirst()
                     }
+                    self.onRawWaveformSample?(maxSample)
                 }
             }
         }
@@ -193,6 +240,7 @@ public final class ThumpDetector: ObservableObject {
             let t = config.overrideThreshold ?? config.threshold
             let w = config.groupingWindow
             let c = config.cooldown
+            let p = config.surfaceProfile
             config.lock.unlock()
             
             if let pattern = self.knockDetector.process(
@@ -200,7 +248,8 @@ public final class ThumpDetector: ObservableObject {
                 threshold: t,
                 groupingWindow: w,
                 cooldown: c,
-                now: sample.timestamp
+                now: sample.timestamp,
+                surfaceProfile: p
             ) {
                 Task { @MainActor in
                     self.commitTaps(count: pattern)
