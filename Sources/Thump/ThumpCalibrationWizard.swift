@@ -209,12 +209,14 @@ public struct ThumpCalibrationWizard: View {
                             .buttonStyle(.bordered)
                         }
 
-                        Button("Reset step") {
-                            withAnimation {
-                                collector.resetCurrentStep()
+                        if step < 4 {
+                            Button("Reset step") {
+                                withAnimation {
+                                    collector.resetCurrentStep()
+                                }
                             }
+                            .buttonStyle(.bordered)
                         }
-                        .buttonStyle(.bordered)
 
                         Spacer()
 
