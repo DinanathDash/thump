@@ -258,9 +258,7 @@ struct ThumpSettingsPane: View {
                         infoTip: "Thump references Apple Silicon SPU accelerometer hardware parameters from nocnoc."
                     ) {
                         Button("License") {
-                            if let url = URL(string: "https://gitlab.com/droppyformac1/droplets/-/blob/main/droplets/thump/ACKNOWLEDGEMENTS.md") {
-                                NSWorkspace.shared.open(url)
-                            }
+                            ThumpLinks.openAcknowledgements()
                         }
                     }
                 }

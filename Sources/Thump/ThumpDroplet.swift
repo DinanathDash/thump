@@ -4,6 +4,15 @@ import DroppyKit
 import SwiftUI
 import AppKit
 
+/// The class Droppy's loader instantiates, named in the bundle's
+/// `NSPrincipalClass`. Keep it empty: it runs before the host is ready.
+@objc(ThumpPrincipal)
+public final class ThumpPrincipal: NSObject, DropletPrincipal {
+    public override init() { super.init() }
+
+    @MainActor public func makeDroplet() -> AnyObject { ThumpDroplet() }
+}
+
 // =============================================================================
 // THUMP - CHASSIS TAP DETECTOR DROPLET
 // =============================================================================
@@ -24,7 +33,7 @@ public final class ThumpDroplet: NSObject, ObservableObject, Droplet {
     
     // Live Activity publisher
     @Published private var liveActivitySubject: LiveActivityState? = nil
-    @Published private var lastTapLabel: String = "Tap!"
+    @Published public var lastTapLabel: String?
     
     @Published public var isListening: Bool = false
     
@@ -95,8 +104,8 @@ public final class ThumpDroplet: NSObject, ObservableObject, Droplet {
         liveActivitySubject = LiveActivityState(priority: 0, accessibilityTitle: "Thump detected")
         
         dismissalTask?.cancel()
-        dismissalTask = Task {
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
+        dismissalTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
             guard !Task.isCancelled else { return }
             self.liveActivitySubject = nil
         }
@@ -133,10 +142,7 @@ private struct ThumpWidget: View {
     let context: ShelfWidgetContext
 
     private var hasAnyAction: Bool {
-        guard let host = droplet.host else { return false }
-        return (2...4).contains { taps in
-            host.preferences.value(forKey: "thump.actionType.\(taps)", default: "None") != "None"
-        }
+        droplet.hasAnyAction()
     }
 
     var body: some View {
@@ -222,7 +228,7 @@ extension ThumpDroplet: LiveActivityProviding {
     
     public func makeCompactTrailing() -> AnyView {
         AnyView(
-            Text(lastTapLabel)
+            Text(lastTapLabel ?? "")
                 .font(.system(size: 14, weight: .semibold, design: .rounded))
                 .foregroundStyle(AdaptiveColors.notchSurfacePrimaryText)
                 .id(lastTapLabel)
@@ -240,5 +246,29 @@ extension ThumpDroplet: LiveActivityProviding {
     
     public func makeExpanded(context: LiveActivityContext) -> AnyView {
         AnyView(EmptyView())
+    }
+}
+
+// MARK: - Bundle & Links
+
+private final class ThumpBundleToken {}
+
+extension Bundle {
+    /// The `.droplet` bundle: Thump's identity, version, icon and resources.
+    public nonisolated static let thump = Bundle(for: ThumpBundleToken.self)
+}
+
+/// Links for Thump documentation, repository, and legal notices.
+public enum ThumpLinks {
+    public static let source = "https://gitlab.com/droppyformac1/droplets/-/tree/main/droplets/thump"
+    public static let license = "https://gitlab.com/droppyformac1/droplets/-/blob/main/droplets/thump/NOTICE.md"
+
+    @MainActor
+    public static func openAcknowledgements() {
+        if let url = Bundle.thump.url(forResource: "Acknowledgements", withExtension: "txt", subdirectory: "Assets/Legal") {
+            NSWorkspace.shared.open(url)
+        } else if let url = URL(string: license) {
+            NSWorkspace.shared.open(url)
+        }
     }
 }
