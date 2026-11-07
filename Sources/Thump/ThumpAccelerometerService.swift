@@ -24,8 +24,16 @@ public struct ThumpSample: Equatable, Sendable {
     }
 }
 
+/// Protocol defining the interface for accelerometer data providers.
+public protocol ThumpAccelerometerProviding: AnyObject {
+    var onSample: ((ThumpSample) -> Void)? { get set }
+    func available() -> Bool
+    func start() -> Bool
+    func stop()
+}
+
 /// Service managing communication with Apple Silicon SPU accelerometer hardware via IOKit HID APIs.
-public final class ThumpAccelerometerService {
+public final class ThumpAccelerometerService: ThumpAccelerometerProviding {
     // SPU HID hardware parameters
     private static let spuUsagePage = 0xFF00
     private static let spuAccelerometerUsage = 3

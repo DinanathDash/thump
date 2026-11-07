@@ -2,7 +2,7 @@ import Foundation
 import AppKit
 import DroppyKit
 
-public enum ThumpActionType: String, CaseIterable, Identifiable {
+public enum ThumpActionType: String, CaseIterable, Identifiable, Sendable {
     case none = "None"
     case launchApp = "Launch app"
     case runShortcut = "Run shortcut"
@@ -58,11 +58,22 @@ public enum ThumpActionType: String, CaseIterable, Identifiable {
 public final class ThumpActionRunner {
     private let host: DropletHost
     
+    /// Test hooks to intercept system side-effects without firing actual OS commands or events.
+    public var processRunner: ((_ executable: String, _ arguments: [String]) -> Void)?
+    public var mediaKeySimulator: ((_ keyCode: Int32) -> Void)?
+    public var menuBarToggler: (() -> Void)?
+    public var screenshotTaker: (() -> Void)?
+
     public init(host: DropletHost) {
         self.host = host
     }
     
     public func executeAction(forTaps taps: Int) -> String? {
+        guard (2...4).contains(taps) else {
+            ThumpLogger.log("[WARN] executeAction invoked with invalid tap count \(taps). Only 2...4 taps are supported.")
+            return nil
+        }
+
         let typeRaw = host.preferences.value(forKey: "thump.actionType.\(taps)", default: ThumpActionType.none.rawValue)
         let payload = host.preferences.value(forKey: "thump.actionPayload.\(taps)", default: "")
         
@@ -80,31 +91,84 @@ public final class ThumpActionRunner {
         case .none:
             break
         case .launchApp:
-            runProcess(executable: "/usr/bin/open", arguments: ["-a", payload])
+            if let processRunner {
+                processRunner("/usr/bin/open", ["-a", payload])
+            } else {
+                runProcess(executable: "/usr/bin/open", arguments: ["-a", payload])
+            }
         case .appleScript:
-            runProcess(executable: "/usr/bin/osascript", arguments: ["-e", payload])
+            if let processRunner {
+                processRunner("/usr/bin/osascript", ["-e", payload])
+            } else {
+                runProcess(executable: "/usr/bin/osascript", arguments: ["-e", payload])
+            }
         case .shellCommand:
-            runProcess(executable: "/bin/zsh", arguments: ["-c", payload])
+            if let processRunner {
+                processRunner("/bin/zsh", ["-c", payload])
+            } else {
+                runProcess(executable: "/bin/zsh", arguments: ["-c", payload])
+            }
         case .runShortcut:
-            runProcess(executable: "/usr/bin/shortcuts", arguments: ["run", payload])
+            if let processRunner {
+                processRunner("/usr/bin/shortcuts", ["run", payload])
+            } else {
+                runProcess(executable: "/usr/bin/shortcuts", arguments: ["run", payload])
+            }
         case .lockScreen:
-            runProcess(executable: "/usr/bin/osascript", arguments: ["-e", "tell application \"System Events\" to key code 12 using {command down, control down}"])
+            let script = "tell application \"System Events\" to key code 12 using {command down, control down}"
+            if let processRunner {
+                processRunner("/usr/bin/osascript", ["-e", script])
+            } else {
+                runProcess(executable: "/usr/bin/osascript", arguments: ["-e", script])
+            }
         case .toggleMenuBar:
-            toggleSystemMenuBar()
+            if let menuBarToggler {
+                menuBarToggler()
+            } else {
+                toggleSystemMenuBar()
+            }
         case .screenshot:
-            takeScreenshot()
+            if let screenshotTaker {
+                screenshotTaker()
+            } else {
+                takeScreenshot()
+            }
         case .playPause:
-            playPauseMedia()
+            if let mediaKeySimulator {
+                mediaKeySimulator(16)
+            } else {
+                playPauseMedia()
+            }
         case .volumeUp:
-            simulateMediaKey(keyCode: 0) // NX_KEYTYPE_SOUND_UP
+            if let mediaKeySimulator {
+                mediaKeySimulator(0) // NX_KEYTYPE_SOUND_UP
+            } else {
+                simulateMediaKey(keyCode: 0)
+            }
         case .volumeDown:
-            simulateMediaKey(keyCode: 1) // NX_KEYTYPE_SOUND_DOWN
+            if let mediaKeySimulator {
+                mediaKeySimulator(1) // NX_KEYTYPE_SOUND_DOWN
+            } else {
+                simulateMediaKey(keyCode: 1)
+            }
         case .muteUnmute:
-            simulateMediaKey(keyCode: 7) // NX_KEYTYPE_MUTE
+            if let mediaKeySimulator {
+                mediaKeySimulator(7) // NX_KEYTYPE_MUTE
+            } else {
+                simulateMediaKey(keyCode: 7)
+            }
         case .brightnessUp:
-            simulateMediaKey(keyCode: 2) // NX_KEYTYPE_BRIGHTNESS_UP
+            if let mediaKeySimulator {
+                mediaKeySimulator(2) // NX_KEYTYPE_BRIGHTNESS_UP
+            } else {
+                simulateMediaKey(keyCode: 2)
+            }
         case .brightnessDown:
-            simulateMediaKey(keyCode: 3) // NX_KEYTYPE_BRIGHTNESS_DOWN
+            if let mediaKeySimulator {
+                mediaKeySimulator(3) // NX_KEYTYPE_BRIGHTNESS_DOWN
+            } else {
+                simulateMediaKey(keyCode: 3)
+            }
         }
         
         return "\(taps) taps"
@@ -221,7 +285,11 @@ public final class ThumpActionRunner {
             let filename = "Screenshot \(formatter.string(from: Date())).png"
             let fileURL = desktopURL.appendingPathComponent(filename)
             
-            runProcess(executable: "/usr/sbin/screencapture", arguments: [fileURL.path])
+            if let processRunner {
+                processRunner("/usr/sbin/screencapture", [fileURL.path])
+            } else {
+                runProcess(executable: "/usr/sbin/screencapture", arguments: [fileURL.path])
+            }
         }
     }
 }

@@ -1,26 +1,26 @@
+import Foundation
 import Combine
 import DroppyKit
 import SwiftUI
+import AppKit
 
-/// The class Droppy's loader instantiates, named in the bundle's
-/// `NSPrincipalClass`. Keep it empty: it runs before the host is ready.
-@objc(ThumpPrincipal)
-public final class ThumpPrincipal: NSObject, DropletPrincipal {
-    public override init() { super.init() }
+// =============================================================================
+// THUMP - CHASSIS TAP DETECTOR DROPLET
+// =============================================================================
 
-    @MainActor public func makeDroplet() -> AnyObject { ThumpDroplet() }
-}
-
-/// Thump.
 @MainActor
 public final class ThumpDroplet: NSObject, ObservableObject, Droplet {
     /// Must equal `DroppyDropletID` in the bundle's Info.plist and `id` in
     /// droplet.json. The loader refuses the bundle if the three disagree.
     public nonisolated static let id: DropletID = "thump"
+    public static let widgetID = ShelfWidgetID("thump")
 
     public var host: DropletHost?
-    @Published var detector: ThumpDetector?
-    private var actionRunner: ThumpActionRunner?
+    @Published public var detector: ThumpDetector?
+    public var actionRunner: ThumpActionRunner?
+
+    /// Optional test factory for creating custom/mocked ThumpDetector.
+    public var makeDetector: ((DropletHost, ThumpActionRunner) -> ThumpDetector)?
     
     // Live Activity publisher
     @Published private var liveActivitySubject: LiveActivityState? = nil
@@ -37,7 +37,13 @@ public final class ThumpDroplet: NSObject, ObservableObject, Droplet {
         let runner = ThumpActionRunner(host: host)
         self.actionRunner = runner
         
-        let detector = ThumpDetector(host: host, actionRunner: runner)
+        let detector: ThumpDetector
+        if let make = makeDetector {
+            detector = make(host, runner)
+        } else {
+            detector = ThumpDetector(host: host, actionRunner: runner)
+        }
+
         detector.onThumpDetected = { [weak self] actionName in
             self?.showLiveActivity(for: actionName.lowercased())
         }
@@ -60,7 +66,7 @@ public final class ThumpDroplet: NSObject, ObservableObject, Droplet {
         }
     }
 
-    private func hasAnyAction() -> Bool {
+    public func hasAnyAction() -> Bool {
         guard let host = host else { return false }
         return (2...4).contains { taps in
             host.preferences.value(forKey: "thump.actionType.\(taps)", default: "None") != "None"
@@ -76,7 +82,6 @@ public final class ThumpDroplet: NSObject, ObservableObject, Droplet {
         host = nil
     }
 
-    
     public func toggleListening() {
         if isListening {
             detector?.stop()
@@ -85,7 +90,7 @@ public final class ThumpDroplet: NSObject, ObservableObject, Droplet {
         }
     }
     
-    private func showLiveActivity(for actionName: String) {
+    public func showLiveActivity(for actionName: String) {
         self.lastTapLabel = actionName
         liveActivitySubject = LiveActivityState(priority: 0, accessibilityTitle: "Thump detected")
         

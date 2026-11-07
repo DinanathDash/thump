@@ -12,7 +12,7 @@ let package = Package(
         .library(name: "Thump", type: .dynamic, targets: ["Thump"])
     ],
     dependencies: [
-        .package(url: "https://gitlab.com/droppyformac1/droppykit.git", from: "1.20.1")
+        .package(url: "https://gitlab.com/droppyformac1/droppykit.git", from: "1.22.0")
     ],
     targets: [
         .target(
@@ -21,6 +21,13 @@ let package = Package(
         ),
         .executableTarget(
             name: "ThumpHarness",
+            dependencies: [
+                "Thump",
+                .product(name: "DroppyKitHarness", package: "droppykit")
+            ]
+        ),
+        .testTarget(
+            name: "ThumpTests",
             dependencies: [
                 "Thump",
                 .product(name: "DroppyKitHarness", package: "droppykit")

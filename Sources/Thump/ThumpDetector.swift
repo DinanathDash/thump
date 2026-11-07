@@ -8,7 +8,7 @@ import AppKit
 @MainActor
 public final class ThumpDetector: ObservableObject {
     public let host: DropletHost
-    private let actionRunner: ThumpActionRunner
+    public let actionRunner: ThumpActionRunner
     
     // Status
     @Published public var isListening: Bool = false
@@ -19,8 +19,8 @@ public final class ThumpDetector: ObservableObject {
     public var onStateChange: ((Bool) -> Void)?
     
     // Detection Objects
-    private let accelService = ThumpAccelerometerService()
-    private let knockDetector = ThumpKnockDetector()
+    public let accelService: ThumpAccelerometerProviding
+    public let knockDetector: ThumpKnockDetector
     
     // UI Visualization
     public var onRawWaveformSample: ((Double) -> Void)?
@@ -99,12 +99,19 @@ public final class ThumpDetector: ObservableObject {
     public var isSuppressingActions: Bool = false
     private var cancellables: Set<AnyCancellable> = []
     
-    public init(host: DropletHost, actionRunner: ThumpActionRunner) {
+    public init(
+        host: DropletHost,
+        actionRunner: ThumpActionRunner,
+        accelerometer: ThumpAccelerometerProviding = ThumpAccelerometerService(),
+        knockDetector: ThumpKnockDetector = ThumpKnockDetector()
+    ) {
         self.host = host
         self.actionRunner = actionRunner
+        self.accelService = accelerometer
+        self.knockDetector = knockDetector
         
         config.lock.lock()
-        config.isAppActive = NSApplication.shared.isActive
+        config.isAppActive = true
         config.lock.unlock()
 
         updateCache()
@@ -133,7 +140,7 @@ public final class ThumpDetector: ObservableObject {
         return config.overrideThreshold ?? config.threshold
     }
 
-    private func updateCache() {
+    public func updateCache() {
         let rawProfile = host.preferences.value(forKey: "thump.surfaceProfile", default: "dynamic")
         let profile = ThumpSurfaceProfile.from(raw: rawProfile)
 
@@ -188,7 +195,7 @@ public final class ThumpDetector: ObservableObject {
         accelService.stop()
     }
     
-    private func commitTaps(count: Int) {
+    public func commitTaps(count: Int) {
         guard !isSuppressingActions else {
             ThumpLogger.log("[DETECTOR] Actions suppressed (Calibration Wizard active). Ignoring \(count) taps.")
             return

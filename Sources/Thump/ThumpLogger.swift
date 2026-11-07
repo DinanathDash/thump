@@ -15,8 +15,8 @@ public final class ThumpLogger: @unchecked Sendable {
 
     private let logDirectory: URL
     private let fileName = "thump.log"
-    private let maxFileSize: UInt64 = 5 * 1024 * 1024 // 5 MB
-    private let maxBackups = 3
+    private let maxFileSize: UInt64
+    private let maxBackups: Int
 
     private let queue = DispatchQueue(label: "com.droppy.thump.logger", qos: .utility)
     private var fileHandle: FileHandle?
@@ -29,8 +29,10 @@ public final class ThumpLogger: @unchecked Sendable {
         return formatter
     }()
 
-    public init(directory: URL? = nil) {
+    public init(directory: URL? = nil, maxFileSize: UInt64 = 5 * 1024 * 1024, maxBackups: Int = 3) {
         self.logDirectory = directory ?? Self.logDirectory
+        self.maxFileSize = maxFileSize
+        self.maxBackups = maxBackups
         queue.sync {
             self.prepareLogFile()
         }
@@ -255,8 +257,19 @@ public enum ThumpLogExporter {
         ThumpLogger.flush()
 
         let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: directory.path) else {
-            throw ThumpLogExporterError.noLogFilesFound
+        if !fileManager.fileExists(atPath: directory.path) {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+
+        let mainLogURL = directory.appendingPathComponent("thump.log")
+        if !fileManager.fileExists(atPath: mainLogURL.path) {
+            if directory == ThumpLogger.logDirectory {
+                ThumpLogger.info("Log session initialized for export")
+                ThumpLogger.flush()
+            }
+            if !fileManager.fileExists(atPath: mainLogURL.path) {
+                fileManager.createFile(atPath: mainLogURL.path, contents: "Thump log session initialized\n".data(using: .utf8))
+            }
         }
 
         let contents = try fileManager.contentsOfDirectory(
@@ -275,19 +288,29 @@ public enum ThumpLogExporter {
         }
 
         let dateString = dateFormatter.string(from: date)
-        let archiveName = "Thump-Logs-\(dateString).zip"
+        let archiveName = "Thump-Logs-\(dateString)-\(UUID().uuidString.prefix(8)).zip"
         let archiveURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(archiveName)
 
         if fileManager.fileExists(atPath: archiveURL.path) {
             try? fileManager.removeItem(at: archiveURL)
         }
 
-        try await Task.detached {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
-            process.arguments = ["-q", "-j", archiveURL.path] + logFiles.map(\.path)
-            try process.run()
-            process.waitUntilExit()
+        // Foundation zips the directory directly via coordinated read "for uploading",
+        // eliminating child processes and avoiding interactive stdin prompts.
+        try await Task.detached(priority: .utility) {
+            var coordinationError: NSError?
+            var copyError: Error?
+            NSFileCoordinator().coordinate(readingItemAt: directory, options: .forUploading, error: &coordinationError) { zipURL in
+                do {
+                    if FileManager.default.fileExists(atPath: archiveURL.path) {
+                        try? FileManager.default.removeItem(at: archiveURL)
+                    }
+                    try FileManager.default.copyItem(at: zipURL, to: archiveURL)
+                } catch {
+                    copyError = error
+                }
+            }
+            if let error = coordinationError ?? copyError { throw error }
         }.value
 
         guard fileManager.fileExists(atPath: archiveURL.path) else {

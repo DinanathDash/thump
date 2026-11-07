@@ -10,21 +10,26 @@ public final class ThumpKnockDetector {
     /// Callback delivering normalized transient energy levels (0.0 to 1.2) for HUD and settings visualizers.
     public var onWaveformSample: ((Double) -> Void)?
 
+    /// Optional test override for simulating typing active/inactive state.
+    public var isTypingOverride: Bool? = nil
+
     // MARK: - State Tracking
 
     private var baselineGravity = SIMD3<Double>(0, 0, 0)
     private var referenceGravity = SIMD3<Double>(0, 0, 0)
     private var referenceGravityTimestamp: TimeInterval = 0.0
     private var previousAcceleration = SIMD3<Double>(0, 0, 0)
-    private var isInitialized = false
+    public private(set) var isInitialized = false
 
     /// Running estimate of ambient chassis vibrations (fans, typing, desk movement).
-    private var ambientNoiseEnvelope: Double = 0.01
+    public private(set) var ambientNoiseEnvelope: Double = 0.01
 
     /// Detected tap timestamps in the current rhythmic sequence.
     private var recordedTapTimestamps: [TimeInterval] = []
     private var lastRegisteredTapTime: TimeInterval = -100.0
     private var previousSampleTime: TimeInterval = 0.0
+
+    public var activeTapCount: Int { recordedTapTimestamps.count }
 
     /// Lockout timestamp to suppress false positives during macroscopic laptop movement.
     private var macroscopicMotionLockoutUntil: TimeInterval = 0.0
@@ -35,7 +40,7 @@ public final class ThumpKnockDetector {
 
     /// Rolling window of recent jerk samples to estimate body tremor / micro-sway on lap.
     private var rollingJerkSway: [Double] = []
-    private var detectedSurfaceState: String = "DESK"
+    public private(set) var detectedSurfaceState: String = "DESK"
     private var lastSurfaceLogTime: TimeInterval = 0.0
 
     // MARK: - Lifecycle
@@ -59,6 +64,7 @@ public final class ThumpKnockDetector {
         rollingJerkSway.removeAll()
         detectedSurfaceState = "DESK"
         lastSurfaceLogTime = 0.0
+        isTypingOverride = nil
     }
 
     // MARK: - Real-Time Processing
@@ -73,6 +79,22 @@ public final class ThumpKnockDetector {
         now: TimeInterval,
         surfaceProfile: ThumpSurfaceProfile = .dynamic
     ) -> Int? {
+        guard sample.x.isFinite && sample.y.isFinite && sample.z.isFinite else {
+            ThumpLogger.warn("ThumpKnockDetector received non-finite sample (\(sample.x), \(sample.y), \(sample.z)). Discarding.")
+            return nil
+        }
+
+        // Monotonic time skew handling (e.g. system sleep/wake or backward clock adjust)
+        if now < lastRegisteredTapTime {
+            lastRegisteredTapTime = now - 100.0
+        }
+        if now < referenceGravityTimestamp {
+            referenceGravityTimestamp = now
+        }
+        if macroscopicMotionLockoutUntil > now + 5.0 {
+            macroscopicMotionLockoutUntil = 0.0
+        }
+
         if !isInitialized {
             baselineGravity = sample
             referenceGravity = sample
@@ -189,22 +211,31 @@ public final class ThumpKnockDetector {
 
         // 5. Active typing suppression
         // Keypresses, spacebar strikes, and palm shifts during typing generate mechanical chassis vibrations.
-        // CGEventSource checks system-wide keyboard and modifier activity without requiring special permissions.
         var isTypingActive = false
-        #if os(macOS)
-        let sKey1 = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .keyDown)
-        let sKey2 = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .keyDown)
-        let sFlags = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .flagsChanged)
-        let validKeyTimes = [sKey1, sKey2, sFlags].filter { $0 >= 0.0 }
-        if let minKeyTime = validKeyTimes.min(), minKeyTime < 0.38 {
-            isTypingActive = true
-            macroscopicMotionLockoutUntil = max(macroscopicMotionLockoutUntil, now + 0.15)
-            // Immediately purge any in-progress tap sequence so typing cannot form or trigger an action
-            if !recordedTapTimestamps.isEmpty {
-                recordedTapTimestamps.removeAll()
+        if let override = isTypingOverride {
+            isTypingActive = override
+            if override {
+                macroscopicMotionLockoutUntil = max(macroscopicMotionLockoutUntil, now + 0.15)
+                if !recordedTapTimestamps.isEmpty {
+                    recordedTapTimestamps.removeAll()
+                }
             }
+        } else {
+            #if os(macOS)
+            let sKey1 = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .keyDown)
+            let sKey2 = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .keyDown)
+            let sFlags = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .flagsChanged)
+            let validKeyTimes = [sKey1, sKey2, sFlags].filter { $0 >= 0.0 }
+            if let minKeyTime = validKeyTimes.min(), minKeyTime < 0.38 {
+                isTypingActive = true
+                macroscopicMotionLockoutUntil = max(macroscopicMotionLockoutUntil, now + 0.15)
+                // Immediately purge any in-progress tap sequence so typing cannot form or trigger an action
+                if !recordedTapTimestamps.isEmpty {
+                    recordedTapTimestamps.removeAll()
+                }
+            }
+            #endif
         }
-        #endif
 
         // 6. Macroscopic handling detection (e.g. lifting, adjusting display lid, carrying laptop)
         let dynamicHighPassMagnitude = simd_length(dynamicHighPass)
@@ -273,7 +304,6 @@ public final class ThumpKnockDetector {
             ThumpLogger.log(String(format: "[TAP] [%@] Tap #%d registered%@. Total in active sequence: %d",
                   detectedSurfaceState, recordedTapTimestamps.count, delta, recordedTapTimestamps.count))
         }
-
 
         // 7. Check if sequence is complete
         var completedSequence: Int? = nil

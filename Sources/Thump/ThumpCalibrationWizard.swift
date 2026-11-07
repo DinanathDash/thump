@@ -3,7 +3,7 @@ import Combine
 import DroppyKit
 
 @MainActor
-private final class CalibrationCollector: ObservableObject {
+final class CalibrationCollector: ObservableObject {
     struct TapImpulse: Sendable {
         let peakMagnitude: Double
         let timestamp: TimeInterval
