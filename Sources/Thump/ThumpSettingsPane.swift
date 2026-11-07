@@ -288,13 +288,9 @@ struct ThumpSettingsPane: View {
 
     private func exportLogs() {
         isExportingLogs = true
-        Task {
-            defer { isExportingLogs = false }
+        Task { @MainActor in
             do {
                 let tempZipURL = try await ThumpLogExporter.exportLogs()
-                defer {
-                    try? FileManager.default.removeItem(at: tempZipURL)
-                }
 
                 let panel = NSSavePanel()
                 panel.title = "Export Thump Logs"
@@ -302,14 +298,28 @@ struct ThumpSettingsPane: View {
                 panel.allowedContentTypes = [.zip]
                 panel.canCreateDirectories = true
 
-                if panel.runModal() == .OK, let destinationURL = panel.url {
-                    let fileManager = FileManager.default
-                    if fileManager.fileExists(atPath: destinationURL.path) {
-                        try fileManager.removeItem(at: destinationURL)
+                NSApp.activate(ignoringOtherApps: true)
+
+                panel.begin { response in
+                    defer {
+                        try? FileManager.default.removeItem(at: tempZipURL)
+                        self.isExportingLogs = false
                     }
-                    try fileManager.copyItem(at: tempZipURL, to: destinationURL)
+
+                    guard response == .OK, let destinationURL = panel.url else { return }
+
+                    do {
+                        let fileManager = FileManager.default
+                        if fileManager.fileExists(atPath: destinationURL.path) {
+                            try fileManager.removeItem(at: destinationURL)
+                        }
+                        try fileManager.copyItem(at: tempZipURL, to: destinationURL)
+                    } catch {
+                        ThumpLogger.error("Failed to export logs: \(error.localizedDescription)")
+                    }
                 }
             } catch {
+                isExportingLogs = false
                 ThumpLogger.error("Failed to export logs: \(error.localizedDescription)")
             }
         }
