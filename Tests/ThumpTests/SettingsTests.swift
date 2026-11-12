@@ -128,4 +128,33 @@ struct SettingsTests {
         detector.updateCache()
         // No crash and successfully cached
     }
+
+    @MainActor
+    @Test("Resetting calibration clears calibrated flag and threshold overrides back to defaults")
+    func calibrationResetPreferences() {
+        let host = makeHarnessHost()
+        let runner = ThumpActionRunner(host: host)
+        let detector = ThumpDetector(host: host, actionRunner: runner)
+
+        // Set custom calibration preferences
+        host.preferences.setValue(true, forKey: "thump.hasCalibrated")
+        host.preferences.setValue(0.045, forKey: "thump.accelThreshold")
+        host.preferences.setValue(0.72, forKey: "thump.groupingWindow")
+        host.preferences.setValue(0.070, forKey: "thump.cooldown")
+        detector.updateCache()
+
+        #expect(host.preferences.value(forKey: "thump.hasCalibrated", default: false) == true)
+        #expect(abs(detector.currentEffectiveThreshold - 0.045) < 0.0001)
+
+        // Simulate Reset calibration action (from ThumpSettingsPane)
+        host.preferences.setValue(false, forKey: "thump.hasCalibrated")
+        host.preferences.setValue(nil as Double?, forKey: "thump.accelThreshold")
+        host.preferences.setValue(nil as Double?, forKey: "thump.groupingWindow")
+        host.preferences.setValue(nil as Double?, forKey: "thump.cooldown")
+        detector.updateCache()
+
+        #expect(host.preferences.value(forKey: "thump.hasCalibrated", default: true) == false)
+        // With thresholds reset to nil, dynamic profile default threshold is 0.020
+        #expect(abs(detector.currentEffectiveThreshold - 0.020) < 0.0001)
+    }
 }

@@ -4,13 +4,14 @@ import DroppyKitHarness
 import simd
 @testable import Thump
 
-/// Builds a test DropletHost using DroppyKitHarness mock services.
+/// Builds a test DropletHost using DroppyKitHarness mock services with all declared capabilities granted.
 @MainActor
-func makeHarnessHost() -> DropletHost {
-    let recorder = HarnessRecorder()
+func makeHarnessHost(recorder: HarnessRecorder = HarnessRecorder()) -> DropletHost {
     let id = ThumpDroplet.id
+    let capabilities: Set<DropletPermission> = [.accessibility, .appleEvents, .screenCapture, .hud]
+    recorder.grantedCapabilities = capabilities
     return DropletHost(
-        grantedCapabilities: [.accessibility, .appleEvents, .screenCapture],
+        grantedCapabilities: capabilities,
         preferences: HarnessPreferencesService(dropletID: id, recorder: recorder),
         environment: HarnessEnvironmentService(appVersion: "16.0.1", dropletID: id),
         log: HarnessLogService(recorder: recorder),

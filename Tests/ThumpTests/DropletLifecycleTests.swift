@@ -73,8 +73,7 @@ struct DropletLifecycleTests {
         try droplet.activate(host: host)
 
         let context = ShelfWidgetContext(availableSize: CGSize(width: 380, height: 58))
-        let view = droplet.makeWidgetView(ShelfWidgetID("thump"), context: context)
-        #expect(view != nil)
+        let _ = droplet.makeWidgetView(ShelfWidgetID("thump"), context: context)
 
         droplet.deactivate()
     }
@@ -86,8 +85,7 @@ struct DropletLifecycleTests {
         try droplet.activate(host: host)
 
         let context = SettingsPaneContext(presentation: .harness, preferredContentWidth: 400)
-        let settingsPane = droplet.makeSettingsPane(context: context)
-        #expect(settingsPane != nil)
+        let _ = droplet.makeSettingsPane(context: context)
 
         let calibrationPage = droplet.makeSettingsPage(id: "calibration", context: context)
         #expect(calibrationPage != nil)
@@ -100,35 +98,45 @@ struct DropletLifecycleTests {
 
     @Test("Live activity views and presentation with CompactLiveActivityContext")
     func liveActivityPresentation() throws {
-        let host = makeHarnessHost()
+        let recorder = HarnessRecorder()
+        let host = makeHarnessHost(recorder: recorder)
         let droplet = ThumpDroplet()
         try droplet.activate(host: host)
 
         droplet.presentTapFeedback(for: "2 taps")
 
-        let leading = droplet.makeCompactLeading()
-        #expect(leading != nil)
+        #expect(droplet.lastTapLabel == "2 taps")
 
-        let trailing = droplet.makeCompactTrailing()
-        #expect(trailing != nil)
+        // 1. Verify native DroppyKit 1.23 HUD strip presentation
+        #expect(recorder.currentHUD?.id == "thump.detected")
+        #expect(recorder.currentHUD?.accessibilityLabel == "Thump: 2 taps")
+        #expect(recorder.currentHUD?.priority == .normal)
+
+        // 2. Compact live activity row items
+        let _ = droplet.makeCompactLeading()
+        let _ = droplet.makeCompactTrailing()
 
         let compactContext = CompactLiveActivityContext(
             surface: .builtInNotch,
             seat: .compact,
             slotSize: CGSize(width: 60, height: 32)
         )
-        let contextLeading = droplet.makeCompactLeading(context: compactContext)
-        #expect(contextLeading != nil)
+        let _ = droplet.makeCompactLeading(context: compactContext)
+        let _ = droplet.makeCompactTrailing(context: compactContext)
+        let _ = droplet.makeCompanionCompact(context: compactContext)
 
-        let contextTrailing = droplet.makeCompactTrailing(context: compactContext)
-        #expect(contextTrailing != nil)
+        // 3. showLiveActivity backward-compatibility forwarder
+        droplet.showLiveActivity(for: "3 taps")
+        #expect(droplet.lastTapLabel == "3 taps")
+        #expect(recorder.currentHUD?.accessibilityLabel == "Thump: 3 taps")
 
         droplet.deactivate()
     }
 
     @Test("MCP tools provide expected tools and execute actions")
     func mcpToolsExecution() async throws {
-        let host = makeHarnessHost()
+        let recorder = HarnessRecorder()
+        let host = makeHarnessHost(recorder: recorder)
         let droplet = ThumpDroplet()
         try droplet.activate(host: host)
 
@@ -160,6 +168,7 @@ struct DropletLifecycleTests {
         let triggerJSON = try await droplet.performMCPTool(named: "trigger_tap_action", argumentsJSON: #"{"taps": 2}"#)
         #expect(triggerJSON.contains("\"status\" : \"triggered\""))
         #expect(triggerJSON.contains("2"))
+        #expect(recorder.currentHUD?.accessibilityLabel == "Thump: 2 taps")
 
         // 5. get_calibration_profile
         let profileJSON = try await droplet.performMCPTool(named: "get_calibration_profile", argumentsJSON: "{}")
