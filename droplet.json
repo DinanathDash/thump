@@ -7,14 +7,15 @@
   "category": "Productivity",
   "kit": {
     "abi": 1,
-    "minAPI": "1.20.1"
+    "minAPI": "1.23.0"
   },
   "minAppVersion": "16.0.1",
   "minMacOS": "26.0",
   "capabilities": [
     "apple-events",
     "accessibility",
-    "screen-capture"
+    "screen-capture",
+    "hud"
   ],
   "surfaces": [
     "shelf-widget",

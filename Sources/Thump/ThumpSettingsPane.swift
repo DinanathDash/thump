@@ -139,12 +139,12 @@ struct ThumpSettingsPane: View {
                             title: "Surface profile",
                             infoTip: currentProfile.summaryDescription
                         ) {
-                            Picker("Surface profile", selection: Binding(
+                            Picker("Surface profile", selection: Binding<String>(
                                 get: {
                                     let _ = redrawCounter
                                     return droplet.host?.preferences.value(forKey: "thump.surfaceProfile", default: ThumpSurfaceProfile.dynamic.rawValue) ?? ThumpSurfaceProfile.dynamic.rawValue
                                 },
-                                set: { newRaw in
+                                set: { (newRaw: String) in
                                     droplet.host?.preferences.setValue(newRaw, forKey: "thump.surfaceProfile")
                                     let newProfile = ThumpSurfaceProfile.from(raw: newRaw)
                                     let hasCal = droplet.host?.preferences.value(forKey: "thump.hasCalibrated", default: false) ?? false
@@ -208,6 +208,29 @@ struct ThumpSettingsPane: View {
                                 page: "calibration"
                             ) {
                                 ThumpWizardIcon()
+                            }
+
+                            DropletSettingsDivider()
+
+                            DropletControlRow(
+                                title: "Reset calibration",
+                                infoTip: "Restores standard sensor thresholds and dynamic profile."
+                            ) {
+                                Button("Reset", role: .destructive) {
+                                    let confirmed = DropletConfirmationDialog.present(
+                                        title: "Reset Sensor Calibration?",
+                                        message: "This will remove your custom calibration and restore default thresholds.",
+                                        confirmTitle: "Reset Calibration",
+                                        symbol: "arrow.counterclockwise"
+                                    )
+                                    if confirmed {
+                                        droplet.host?.preferences.setValue(false, forKey: "thump.hasCalibrated")
+                                        droplet.host?.preferences.setValue(nil as Double?, forKey: "thump.accelThreshold")
+                                        droplet.host?.preferences.setValue(nil as Double?, forKey: "thump.groupingWindow")
+                                        droplet.host?.preferences.setValue(nil as Double?, forKey: "thump.cooldown")
+                                        redrawCounter += 1
+                                    }
+                                }
                             }
                         }
                     }

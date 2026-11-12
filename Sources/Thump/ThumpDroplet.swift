@@ -54,7 +54,7 @@ public final class ThumpDroplet: NSObject, ObservableObject, Droplet {
         }
 
         detector.onThumpDetected = { [weak self] actionName in
-            self?.showLiveActivity(for: actionName.lowercased())
+            self?.presentTapFeedback(for: actionName.lowercased())
         }
         detector.onStateChange = { [weak self] listening in
             self?.isListening = listening
@@ -100,8 +100,36 @@ public final class ThumpDroplet: NSObject, ObservableObject, Droplet {
     }
     
     public func showLiveActivity(for actionName: String) {
+        presentTapFeedback(for: actionName)
+    }
+
+    public func presentTapFeedback(for actionName: String) {
         self.lastTapLabel = actionName
-        liveActivitySubject = LiveActivityState(priority: 0, accessibilityTitle: "Thump detected")
+        
+        // 1. Present native DroppyKit 1.23 HUD strip
+        let hudRequest = DropletHUDRequest(
+            id: "thump.detected",
+            duration: 1.5,
+            priority: .normal,
+            accessibilityLabel: "Thump: \(actionName)"
+        ) {
+            Image(systemName: "hand.tap.fill")
+                .font(.system(size: DroppyLiveActivityMetrics.iconSize, weight: .semibold))
+                .foregroundStyle(AdaptiveColors.notchSurfacePrimaryText)
+        } trailing: {
+            Text(actionName)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(AdaptiveColors.notchSurfacePrimaryText)
+        }
+        host?.hud.present(hudRequest)
+
+        // 2. Publish Live Activity state with DroppyKit 1.23 priority band
+        liveActivitySubject = LiveActivityState(
+            priority: .status,
+            kind: .custom,
+            accessibilityTitle: "Thump detected",
+            accessibilityValue: { actionName }
+        )
         
         dismissalTask?.cancel()
         dismissalTask = Task { @MainActor in
@@ -183,7 +211,11 @@ private struct ThumpWidget: View {
                         } label: {
                             Image(systemName: droplet.isListening ? "stop.fill" : "play.fill")
                         }
-                        .buttonStyle(DroppyCircleButtonStyle(size: 20))
+                        .buttonStyle(DroppyWashCircleButtonStyle(
+                            diameter: context.washControlSize,
+                            tone: droplet.isListening ? .accent(.green) : .neutral,
+                            usesAdaptiveForegrounds: context.usesAdaptiveForegrounds
+                        ))
                         .help(droplet.isListening ? "Stop" : "Start")
                     }
                 }
@@ -222,8 +254,13 @@ extension ThumpDroplet: LiveActivityProviding {
     public func makeCompactLeading() -> AnyView {
         AnyView(
             Image(systemName: "hand.tap.fill")
+                .font(.system(size: DroppyLiveActivityMetrics.iconSize, weight: .medium))
                 .foregroundStyle(AdaptiveColors.notchSurfacePrimaryText)
         )
+    }
+
+    public func makeCompactLeading(context: CompactLiveActivityContext) -> AnyView {
+        makeCompactLeading()
     }
     
     public func makeCompactTrailing() -> AnyView {
@@ -232,8 +269,11 @@ extension ThumpDroplet: LiveActivityProviding {
                 .font(.system(size: 14, weight: .semibold, design: .rounded))
                 .foregroundStyle(AdaptiveColors.notchSurfacePrimaryText)
                 .id(lastTapLabel)
-                .transition(DroppyTransition.compactContent)
         )
+    }
+
+    public func makeCompactTrailing(context: CompactLiveActivityContext) -> AnyView {
+        makeCompactTrailing()
     }
     
     public func makeCompanionCompact(context: CompactLiveActivityContext) -> AnyView {
@@ -246,6 +286,142 @@ extension ThumpDroplet: LiveActivityProviding {
     
     public func makeExpanded(context: LiveActivityContext) -> AnyView {
         AnyView(EmptyView())
+    }
+}
+
+// MARK: - MCP Tools
+
+extension ThumpDroplet: MCPToolProviding {
+    public var mcpTools: [DropletMCPTool] {
+        [
+            DropletMCPTool(
+                name: "get_status",
+                title: "Get Thump status",
+                summary: "Returns Thump's current state: listening status, hardware sensor availability, calibrated profile, and configured actions for 2, 3, and 4 taps."
+            ),
+            DropletMCPTool(
+                name: "toggle_listening",
+                title: "Toggle listening state",
+                summary: "Toggles tap detection on or off."
+            ),
+            DropletMCPTool(
+                name: "set_listening",
+                title: "Set listening state",
+                summary: "Starts or stops listening for chassis taps. Takes {\"enabled\": true|false}.",
+                inputSchemaJSON: #"{"type":"object","properties":{"enabled":{"type":"boolean"}},"required":["enabled"]}"#
+            ),
+            DropletMCPTool(
+                name: "trigger_tap_action",
+                title: "Trigger tap action",
+                summary: "Simulates and executes the action assigned to a given number of taps (2 for double, 3 for triple, 4 for quad tap), displaying native HUD feedback. Takes {\"taps\": 2}.",
+                inputSchemaJSON: #"{"type":"object","properties":{"taps":{"type":"integer","minimum":2,"maximum":4}},"required":["taps"]}"#
+            ),
+            DropletMCPTool(
+                name: "get_calibration_profile",
+                title: "Get calibration profile",
+                summary: "Returns the active accelerometer surface profile (dynamic, desk, lap), sensitivity multiplier, and effective thresholds."
+            )
+        ]
+    }
+
+    public func performMCPTool(named name: String, argumentsJSON: String) async throws -> String {
+        switch name {
+        case "get_status":
+            let available = ThumpAccelerometerService().available()
+            let hasCalibrated = host?.preferences.value(forKey: "thump.hasCalibrated", default: false) ?? false
+            let rawProfile = host?.preferences.value(forKey: "thump.surfaceProfile", default: ThumpSurfaceProfile.dynamic.rawValue) ?? ThumpSurfaceProfile.dynamic.rawValue
+            let profile = ThumpSurfaceProfile.from(raw: rawProfile)
+            let sensitivity = host?.preferences.value(forKey: "thump.sensitivityMultiplier", default: 1.0) ?? 1.0
+
+            var actions: [String: String] = [:]
+            for taps in 2...4 {
+                let type = host?.preferences.value(forKey: "thump.actionType.\(taps)", default: "None") ?? "None"
+                let payload = host?.preferences.value(forKey: "thump.actionPayload.\(taps)", default: "") ?? ""
+                actions["\(taps)_taps"] = payload.isEmpty ? type : "\(type) (\(payload))"
+            }
+
+            let result: [String: Any] = [
+                "is_listening": isListening,
+                "sensor_available": available,
+                "has_calibrated": hasCalibrated,
+                "surface_profile": profile.displayName,
+                "sensitivity_percentage": Int(round(sensitivity * 100)),
+                "assigned_actions": actions
+            ]
+            let data = try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted])
+            return String(decoding: data, as: UTF8.self)
+
+        case "toggle_listening":
+            toggleListening()
+            let result: [String: Any] = [
+                "status": "ok",
+                "is_listening": isListening
+            ]
+            let data = try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted])
+            return String(decoding: data, as: UTF8.self)
+
+        case "set_listening":
+            struct SetArgs: Decodable {
+                let enabled: Bool
+            }
+            let args = try JSONDecoder().decode(SetArgs.self, from: Data(argumentsJSON.utf8))
+            if args.enabled != isListening {
+                toggleListening()
+            }
+            let result: [String: Any] = [
+                "status": "ok",
+                "is_listening": isListening
+            ]
+            let data = try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted])
+            return String(decoding: data, as: UTF8.self)
+
+        case "trigger_tap_action":
+            struct TriggerArgs: Decodable {
+                let taps: Int
+            }
+            let args = try JSONDecoder().decode(TriggerArgs.self, from: Data(argumentsJSON.utf8))
+            guard (2...4).contains(args.taps) else {
+                throw NSError(domain: "ThumpMCP", code: 400, userInfo: [
+                    NSLocalizedDescriptionKey: "Invalid taps count (\(args.taps)). Supported values: 2, 3, or 4."
+                ])
+            }
+            let actionName = actionRunner?.executeAction(forTaps: args.taps)
+            if let action = actionName {
+                presentTapFeedback(for: action.lowercased())
+            }
+            let result: [String: Any] = [
+                "status": actionName != nil ? "triggered" : "no_action_assigned",
+                "taps": args.taps,
+                "action": actionName ?? "None"
+            ]
+            let data = try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted])
+            return String(decoding: data, as: UTF8.self)
+
+        case "get_calibration_profile":
+            let rawProfile = host?.preferences.value(forKey: "thump.surfaceProfile", default: ThumpSurfaceProfile.dynamic.rawValue) ?? ThumpSurfaceProfile.dynamic.rawValue
+            let profile = ThumpSurfaceProfile.from(raw: rawProfile)
+            let accelThreshold = host?.preferences.value(forKey: "thump.accelThreshold", default: profile.defaultThreshold) ?? profile.defaultThreshold
+            let sensitivity = host?.preferences.value(forKey: "thump.sensitivityMultiplier", default: 1.0) ?? 1.0
+            let effectiveThreshold = accelThreshold * (1.0 / min(max(sensitivity, 0.50), 1.50))
+            let groupingWindow = host?.preferences.value(forKey: "thump.groupingWindow", default: profile.defaultGroupingWindow) ?? profile.defaultGroupingWindow
+            let cooldown = host?.preferences.value(forKey: "thump.cooldown", default: profile.defaultCooldown) ?? profile.defaultCooldown
+
+            let result: [String: Any] = [
+                "profile": profile.displayName,
+                "accel_threshold": accelThreshold,
+                "sensitivity_multiplier": sensitivity,
+                "effective_threshold": effectiveThreshold,
+                "grouping_window_seconds": groupingWindow,
+                "cooldown_seconds": cooldown
+            ]
+            let data = try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted])
+            return String(decoding: data, as: UTF8.self)
+
+        default:
+            throw NSError(domain: "ThumpMCP", code: 404, userInfo: [
+                NSLocalizedDescriptionKey: "Unknown MCP tool named '\(name)'."
+            ])
+        }
     }
 }
 

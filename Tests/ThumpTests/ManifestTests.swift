@@ -44,6 +44,7 @@ struct ManifestTests {
         #expect(caps.contains("accessibility"))
         #expect(caps.contains("apple-events"))
         #expect(caps.contains("screen-capture"))
+        #expect(caps.contains("hud"))
     }
 
     @Test("droplet.json specifies all advertised surface interfaces")
@@ -59,7 +60,7 @@ struct ManifestTests {
         let json = try manifestJSON()
         let kit = json["kit"] as? [String: Any]
         #expect(kit?["abi"] as? Int == 1)
-        #expect(kit?["minAPI"] as? String == "1.20.1")
+        #expect(kit?["minAPI"] as? String == "1.23.0")
     }
 
     @Test("droplet.json contains relevant search keywords")

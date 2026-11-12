@@ -204,6 +204,7 @@ public final class ThumpActionRunner {
     
     private func runProcess(executable: String, arguments: [String], timeout: TimeInterval = 5.0) {
         guard !executable.isEmpty else { return }
+        // droppykit-lint: allow process: actions execute with a 5s deadline and termination handler
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -255,6 +256,7 @@ public final class ThumpActionRunner {
             data1: data1,
             data2: -1
         )
+        // droppykit-lint: allow synthetic-input: media keys simulate system volume and play/pause HID events
         event?.cgEvent?.post(tap: .cghidEventTap)
         
         let data1Up = Int((keyCode << 16) | (0xb << 8))
@@ -269,6 +271,7 @@ public final class ThumpActionRunner {
             data1: data1Up,
             data2: -1
         )
+        // droppykit-lint: allow synthetic-input: media keys simulate system volume and play/pause HID events
         eventUp?.cgEvent?.post(tap: .cghidEventTap)
     }
     

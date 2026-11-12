@@ -98,19 +98,83 @@ struct DropletLifecycleTests {
         droplet.deactivate()
     }
 
-    @Test("Live activity views and presentation")
+    @Test("Live activity views and presentation with CompactLiveActivityContext")
     func liveActivityPresentation() throws {
         let host = makeHarnessHost()
         let droplet = ThumpDroplet()
         try droplet.activate(host: host)
 
-        droplet.showLiveActivity(for: "2 taps")
+        droplet.presentTapFeedback(for: "2 taps")
 
         let leading = droplet.makeCompactLeading()
         #expect(leading != nil)
 
         let trailing = droplet.makeCompactTrailing()
         #expect(trailing != nil)
+
+        let compactContext = CompactLiveActivityContext(
+            surface: .builtInNotch,
+            seat: .compact,
+            slotSize: CGSize(width: 60, height: 32)
+        )
+        let contextLeading = droplet.makeCompactLeading(context: compactContext)
+        #expect(contextLeading != nil)
+
+        let contextTrailing = droplet.makeCompactTrailing(context: compactContext)
+        #expect(contextTrailing != nil)
+
+        droplet.deactivate()
+    }
+
+    @Test("MCP tools provide expected tools and execute actions")
+    func mcpToolsExecution() async throws {
+        let host = makeHarnessHost()
+        let droplet = ThumpDroplet()
+        try droplet.activate(host: host)
+
+        let tools = droplet.mcpTools
+        #expect(tools.count == 5)
+        let toolNames = Set(tools.map(\.name))
+        #expect(toolNames.contains("get_status"))
+        #expect(toolNames.contains("toggle_listening"))
+        #expect(toolNames.contains("set_listening"))
+        #expect(toolNames.contains("trigger_tap_action"))
+        #expect(toolNames.contains("get_calibration_profile"))
+
+        // 1. get_status
+        let statusJSON = try await droplet.performMCPTool(named: "get_status", argumentsJSON: "{}")
+        #expect(statusJSON.contains("is_listening"))
+        #expect(statusJSON.contains("sensor_available"))
+
+        // 2. toggle_listening
+        let toggleJSON = try await droplet.performMCPTool(named: "toggle_listening", argumentsJSON: "{}")
+        #expect(toggleJSON.contains("\"status\" : \"ok\""))
+
+        // 3. set_listening
+        let setJSON = try await droplet.performMCPTool(named: "set_listening", argumentsJSON: #"{"enabled": false}"#)
+        #expect(droplet.isListening == false)
+        #expect(setJSON.contains("\"status\" : \"ok\""))
+
+        // 4. trigger_tap_action
+        host.preferences.setValue(ThumpActionType.lockScreen.rawValue, forKey: "thump.actionType.2")
+        let triggerJSON = try await droplet.performMCPTool(named: "trigger_tap_action", argumentsJSON: #"{"taps": 2}"#)
+        #expect(triggerJSON.contains("\"status\" : \"triggered\""))
+        #expect(triggerJSON.contains("2"))
+
+        // 5. get_calibration_profile
+        let profileJSON = try await droplet.performMCPTool(named: "get_calibration_profile", argumentsJSON: "{}")
+        #expect(profileJSON.contains("effective_threshold"))
+        #expect(profileJSON.contains("grouping_window_seconds"))
+
+        // 6. unknown tool throws error
+        await #expect(throws: Error.self) {
+            _ = try await droplet.performMCPTool(named: "non_existent_tool", argumentsJSON: "{}")
+        }
+
+        // 7. invalid tap count throws error
+        await #expect(throws: Error.self) {
+            _ = try await droplet.performMCPTool(named: "trigger_tap_action", argumentsJSON: #"{"taps": 5}"#)
+        }
 
         droplet.deactivate()
     }
