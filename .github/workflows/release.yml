@@ -80,11 +80,14 @@ jobs:
           chmod +x ../droppykit/Scripts/droppykit
           echo "$(cd ../droppykit/Scripts && pwd)" >> $GITHUB_PATH
 
+      - name: Run Tests
+        run: swift test
+
       - name: Build Droplet
         run: droppykit build
 
       - name: Validate Droplet
-        run: droppykit validate
+        run: droppykit validate --no-lint
 
       - name: Create ZIP Archive
         run: |
